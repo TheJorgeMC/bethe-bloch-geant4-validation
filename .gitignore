@@ -1,0 +1,27 @@
+# C++ / Geant4 build
+build/
+*.o
+*.obj
+*.exe
+*.out
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Geant4 outputs
+*.root
+*.csv
+G4cout.txt
+G4cerr.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.ipynb_checkpoints
+
+# Sistema
+.DS_Store
+Thumbs.db
