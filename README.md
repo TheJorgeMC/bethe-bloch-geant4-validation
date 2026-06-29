@@ -12,7 +12,7 @@ This project validates the Bethe-Bloch equation for protons through three indepe
 2. **Monte Carlo simulation** — particle transport simulation in **Geant4**.
 3. **Reference data** — stopping power tables from **NIST PSTAR**.
 
-The three results are compared against each other across an energy range of **1–250 MeV**, for four absorber materials spanning a wide range of atomic number: **water, aluminum, copper, and lead**. Particular attention is given to the energy regions where the Bethe-Bloch approximation is expected to break down (very low energies, near the Bragg peak), which is directly relevant to proton therapy applications.
+The three results are compared against each other across an energy range of **3–300 MeV**, matching the clinically relevant proton therapy energy range (Paganetti, 2012), for four absorber materials spanning a wide range of atomic number: **water, aluminum, copper, and lead**. Particular attention is given to the energy regions where the Bethe-Bloch approximation is expected to break down (low energies, below βγ≈0.1, i.e. T≲4.7 MeV for protons), which is directly relevant to proton therapy applications near the Bragg peak.
 
 ## Repository structure
 
@@ -48,7 +48,12 @@ Detailed setup and run instructions will be added as each module is completed.
 
 ## Motivation
 
-Proton stopping power is central to proton therapy treatment planning, where the depth-dose profile (and the location of the Bragg peak) depends directly on how accurately energy loss can be predicted. This project examines both how well the classical Bethe-Bloch theory holds up against a full Monte Carlo treatment, and where its known approximations start to diverge from reality.
+Proton stopping power is central to proton therapy treatment planning, where the depth-dose profile (and the location of the Bragg peak) depends directly on how accurately energy loss can be predicted. The 3–300 MeV energy range studied here matches the clinical range used in proton therapy (Paganetti, 2012), and was chosen deliberately to span both the region where the standard Bethe-Bloch theory holds (βγ≳0.1) and the region near its lower validity limit, where shell and Barkas corrections become significant.
+
+## References
+
+- Paganetti, H. (2012). *Proton Therapy Physics*. CRC Press.
+- Particle Data Group, "Passage of Particles Through Matter," *Prog. Theor. Exp. Phys.*
 
 ## License
 
