@@ -1,4 +1,4 @@
-# Bethe-Bloch Equation Validation for Protons
+# Theoretical-Computational Validation of the Bethe-Bloch Equation for Protontherapy Protons
 
 Theoretical derivation, analytic implementation, and Monte Carlo validation of the Bethe-Bloch stopping power formula for protons, cross-checked against NIST reference data.
 
