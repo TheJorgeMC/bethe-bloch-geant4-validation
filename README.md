@@ -1,4 +1,4 @@
-# Theoretical-Computational Validation of the Bethe-Bloch Equation for Protons in the Proton Therapy Energy Range
+# Theoretical-Computational Validation of the Bethe-Bloch Equation for Protons in the Clinical Proton Therapy Range
 
 Theoretical derivation, analytic implementation, and Monte Carlo validation of the Bethe-Bloch stopping power formula for protons, cross-checked against NIST reference data.
 
