@@ -25,3 +25,6 @@ venv/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Excepción: datos de referencia NIST PSTAR
+!nist_data/*.csv

@@ -1,0 +1,5 @@
+material,matno,n_rows,E_min_MeV,E_max_MeV,covers_3_300_MeV
+water,276,132,0.001,10000.0,True
+aluminum,013,132,0.001,10000.0,True
+copper,029,132,0.001,10000.0,True
+lead,082,132,0.001,10000.0,True
