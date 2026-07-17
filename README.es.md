@@ -1,4 +1,4 @@
-# Validación de la Ecuación de Bethe-Bloch para Protones
+# Validación de la Ecuación de Bethe para Protones
 
 🇬🇧 [English](README.md) | 🇪🇸 Español
 
