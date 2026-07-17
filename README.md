@@ -1,4 +1,6 @@
-# Theoretical-Computational Validation of the Bethe-Bloch Equation for Protons in the Clinical Proton Therapy Range
+# Bethe Equation Validation for Protons
+
+🇬🇧 English | 🇪🇸 [Español](README.es.md)
 
 Theoretical derivation, analytic implementation, and Monte Carlo validation of the Bethe-Bloch stopping power formula for protons, cross-checked against NIST reference data.
 
@@ -8,7 +10,7 @@ Theoretical derivation, analytic implementation, and Monte Carlo validation of t
 
 This project validates the Bethe-Bloch equation for protons through three independent approaches:
 
-1. **Theory** — full derivation of the Bethe-Bloch formula (relativistic, with shell and density corrections), implemented analytically in both **Python and MATLAB** (cross-validated against each other).
+1. **Theory** — full derivation of the Bethe-Bloch formula (relativistic, with shell, Barkas, Bloch, and density corrections), implemented analytically in both **Python and MATLAB** (cross-validated against each other).
 2. **Monte Carlo simulation** — particle transport simulation in **Geant4**.
 3. **Reference data** — stopping power tables from **NIST PSTAR**.
 
@@ -53,7 +55,8 @@ Proton stopping power is central to proton therapy treatment planning, where the
 ## References
 
 - Paganetti, H. (2012). *Proton Therapy Physics*. CRC Press.
-- Particle Data Group, "Passage of Particles Through Matter," *Prog. Theor. Exp. Phys.*
+- Particle Data Group (Navas, S. et al.) (2024). "Passage of Particles Through Matter," *Prog. Theor. Exp. Phys.*
+- Salvat, F. (2022). "Bethe stopping-power formula and its corrections," *Phys. Rev. A* 106, 032809.
 
 ## License
 
