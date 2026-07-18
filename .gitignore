@@ -30,7 +30,7 @@ Thumbs.db
 !nist_data/*.csv
 
 # Archivos del PyCharm
-.idea/misc.xml
+.idea/
 
 # Carpetas de salida (analytic)
 matlab/analytic/output/
