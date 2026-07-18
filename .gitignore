@@ -28,3 +28,10 @@ Thumbs.db
 
 # Excepción: datos de referencia NIST PSTAR
 !nist_data/*.csv
+
+# Archivos del PyCharm
+.idea/misc.xml
+
+# Carpetas de salida (analytic)
+matlab/analytic/output/
+python/analytic/output/
