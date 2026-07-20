@@ -1,11 +1,12 @@
-function energies = betheBlochEnergy()
-%BETHEBLOCHENERGYGRID Energy grid: 44 log-spaced points in the clinical
-%range of 3-300 MeV, with an extended margin up to 1000 MeV (10
-%additional points) for visualization purposes only. Identical to
-%python/analytic build_energy_grid(), for direct cross-validation.
+function energies = betheBlochEnergyGrid()
+%BETHEBLOCHENERGYGRID Loaded directly from the NIST PSTAR standard
+%grid (nist_data/energy_grid.csv) -- see
+%python/analytic/generate_curves.py for the Python twin of this
+%function. Both MUST read the same file.
 
-    clinical = logspace(log10(3.0), log10(300.0), 44);
-    extension = logspace(log10(300.0), log10(1000.0), 10);
-    energies = [clinical, extension];
+    thisDir = fileparts(mfilename('fullpath'));
+    gridPath = fullfile(thisDir, '..', '..', 'nist_data', 'energy_grid.csv');
+    T = readtable(gridPath);
+    energies = T.energy_MeV';
 
 end
