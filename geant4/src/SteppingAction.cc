@@ -20,8 +20,8 @@ SteppingAction::SteppingAction(const DetectorConstruction* det,
 
 void SteppingAction::UserSteppingAction(const G4Step* step)
 {
-  // Solo nos interesan los pasos que OCURREN dentro del slab: el volumen del
-  // punto pre-step es el que define donde se deposito la energia del paso.
+  // Only steps that OCCUR inside the slab matter: the pre-step point's
+  // volume defines where the step's energy was deposited.
   const G4StepPoint* prePoint = step->GetPreStepPoint();
   const G4LogicalVolume* preLV =
       prePoint->GetTouchableHandle()->GetVolume()->GetLogicalVolume();
@@ -30,22 +30,22 @@ void SteppingAction::UserSteppingAction(const G4Step* step)
   G4Track* track = step->GetTrack();
   const G4bool isPrimary = (track->GetParentID() == 0);
 
-  // Indice de capa para el scoring por profundidad. Con G4PVReplica el
-  // numero de replica es el copy number del touchable en profundidad 0.
-  // Con slab sin segmentar (numberOfLayers == 1) el copy number es 0.
+  // Layer index for depth scoring. With G4PVReplica the replica number is
+  // the copy number of the touchable at depth 0. With an unsegmented slab
+  // (numberOfLayers == 1) the copy number is 0.
   const G4int layer = (fDetector->GetNumberOfLayers() > 1)
                           ? prePoint->GetTouchableHandle()->GetCopyNumber()
                           : 0;
 
   // --------------------------------------------------------------------------
-  // 1) Energia depositada en este paso.
-  // FISICA: para el primario, GetTotalEnergyDeposit() contiene la perdida
-  // CONTINUA del proceso de ionizacion — es decir, el dE/dx RESTRINGIDO con
-  // T_cut fijado por el corte de produccion de la region — mas cualquier
-  // deposito discreto bajo umbral. La energia cedida a rayos delta EXPLICITOS
-  // NO esta incluida aqui: viaja con la traza secundaria y aparecera en el
-  // contador de secundarios (si el delta se frena dentro del slab) o en el
-  // de energia escapada (si sale).
+  // 1) Energy deposited in this step.
+  // PHYSICS: for the primary, GetTotalEnergyDeposit() contains the
+  // CONTINUOUS energy loss of the ionisation process — i.e. the RESTRICTED
+  // dE/dx with T_cut set by the region's production cut — plus any
+  // below-threshold discrete deposits. The energy handed to EXPLICIT delta
+  // rays is NOT included here: it travels with the secondary track and will
+  // show up in the secondaries counter (if the delta stops inside the slab)
+  // or in the escaped-energy counter (if it leaves).
   // --------------------------------------------------------------------------
   const G4double edep = step->GetTotalEnergyDeposit();
   if (edep > 0.) {
@@ -56,18 +56,19 @@ void SteppingAction::UserSteppingAction(const G4Step* step)
     }
   }
 
-  // 2) Longitud de traza del primario dentro del slab (para normalizar por
-  // camino real en lugar de espesor geometrico si la dispersion multiple es
-  // apreciable).
+  // 2) Primary track length inside the slab (to normalize by the actual
+  // path instead of the geometric thickness when multiple scattering is
+  // appreciable).
   if (isPrimary) {
     fEventAction->AddPrimaryTrackLength(step->GetStepLength());
   }
 
   // --------------------------------------------------------------------------
-  // 3) Cruce de frontera hacia fuera del slab.
-  // Si el post-step esta en una frontera geometrica y el siguiente volumen ya
-  // no pertenece al slab (ojo: pasar de una capa replicada a la siguiente
-  // sigue siendo slab, IsAbsorber lo cubre), la traza esta saliendo.
+  // 3) Boundary crossing out of the slab.
+  // If the post-step point sits on a geometric boundary and the next volume
+  // no longer belongs to the slab (note: moving from one replicated layer
+  // to the next is still slab; IsAbsorber covers that), the track is
+  // leaving.
   // --------------------------------------------------------------------------
   if (step->GetPostStepPoint()->GetStepStatus() == fGeomBoundary) {
     const G4VPhysicalVolume* nextPV = track->GetNextVolume();
@@ -76,18 +77,19 @@ void SteppingAction::UserSteppingAction(const G4Step* step)
     if (nextLV == nullptr || !fDetector->IsAbsorber(nextLV)) {
       const G4double ekin = track->GetKineticEnergy();
       if (isPrimary) {
-        // Energia cinetica del primario al salir del slab (por la cara
-        // opuesta o, tras mucha dispersion, por un lateral: se registra
-        // igual; el ntuple permite filtrar por longitud de traza).
+        // Primary kinetic energy on leaving the slab (through the exit face
+        // or, after heavy scattering, through a side: recorded either way;
+        // the ntuple allows filtering by track length).
         fEventAction->SetPrimaryExitEnergy(ekin);
       } else if (ekin > 0.) {
-        // Energia que un secundario (tipicamente un rayo delta o un foton
-        // de bremsstrahlung/fluorescencia) SACA del slab sin depositarla.
-        // Esta es la componente que hay que sumar al deposito local para
-        // recuperar el dE/dx no restringido (balance de la seccion 5.3).
-        // NOTA: si la misma traza reentrara al slab y volviera a salir se
-        // contaria dos veces; con esta geometria (slab rodeado de aire) el
-        // efecto es despreciable y se acepta como aproximacion.
+        // Energy that a secondary (typically a delta ray or a
+        // bremsstrahlung/fluorescence photon) CARRIES OUT of the slab
+        // without depositing it. This is the component to add back to the
+        // local deposit to recover the unrestricted dE/dx (balance of
+        // section 5.3).
+        // NOTE: if the same track re-entered the slab and left again it
+        // would be counted twice; with this geometry (slab surrounded by
+        // air) the effect is negligible and accepted as an approximation.
         fEventAction->AddEscapedSecondary(ekin);
       }
     }

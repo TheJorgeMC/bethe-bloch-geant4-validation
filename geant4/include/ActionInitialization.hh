@@ -1,6 +1,6 @@
 // ============================================================================
 // ActionInitialization.hh
-// Cableado estandar de las user actions para modo secuencial y multi-hilo.
+// Standard wiring of the user actions for sequential and multi-threaded mode.
 // ============================================================================
 #ifndef ActionInitialization_hh
 #define ActionInitialization_hh 1

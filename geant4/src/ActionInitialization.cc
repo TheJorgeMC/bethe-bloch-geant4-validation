@@ -15,8 +15,9 @@ ActionInitialization::ActionInitialization(const DetectorConstruction* det)
 
 void ActionInitialization::BuildForMaster() const
 {
-  // El master no genera primarios en modo MT: RunAction recibe nullptr y el
-  // Run del master obtiene particula/energia via Run::Merge() (patron TestEm).
+  // The master generates no primaries in MT mode: RunAction receives nullptr
+  // and the master's Run obtains particle/energy through Run::Merge()
+  // (TestEm pattern).
   SetUserAction(new RunAction(fDetector, nullptr));
 }
 

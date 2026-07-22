@@ -1,42 +1,43 @@
 # ============================================================================
-# run.mac — corrida de produccion en modo batch (sin visualizacion)
-# Uso: ./slab macros/run.mac        (EM option4)
-#      ./slab macros/run.mac 3     (EM option3, chequeo de sensibilidad)
+# run.mac — production run in batch mode (no visualization)
+# Usage: ./slab macros/run.mac        (EM option4)
+#        ./slab macros/run.mac 3     (EM option3, sensitivity check)
 #
-# Esta macro es el REGISTRO REPRODUCIBLE de las condiciones de la corrida:
-# todos los parametros fisicos relevantes (material, espesor, capas, corte de
-# produccion, particula, energia) estan explicitos aqui. Archivar esta macro
-# junto con el archivo de datos que produce.
+# This macro is the REPRODUCIBLE RECORD of the run conditions: every relevant
+# physical parameter (material, thickness, layers, production cut, particle,
+# energy) is explicit here. Archive this macro together with the data file it
+# produces.
 # ============================================================================
 /control/verbose 0
 /run/verbose 1
 /event/verbose 0
 /tracking/verbose 0
 
-# --- Geometria ----------------------------------------------------------
+# --- Geometry -----------------------------------------------------------
 /absorber/material G4_WATER
 /absorber/thickness 5 mm
 /absorber/sizeXY 10 cm
 /absorber/numberOfLayers 50
 
-# --- Corte de produccion de rayos delta (region AbsorberRegion) ---------
-# 1 mm en agua ~ 350 keV de umbral para electrones: define el T_cut del
-# dE/dx RESTRINGIDO reportado por el proceso continuo (diseño, seccion 5).
+# --- Delta-ray production cut (AbsorberRegion) --------------------------
+# 1 mm in water ~ 350 keV electron threshold: sets the T_cut of the
+# RESTRICTED dE/dx reported by the continuous process (design, section 5).
 /physics/absorberCut 1 mm
-# Alternativa "corte fino" (~ decenas de keV; casi todos los deltas
-# explicitos; el dE/dx continuo se acerca al no restringido, mas lento):
+# "Fine cut" alternative (~ tens of keV; nearly all deltas explicit; the
+# continuous dE/dx approaches the unrestricted one, slower):
 # /physics/absorberCut 0.01 mm
 
 /run/initialize
 
-# --- Generador de primarios --------------------------------------------
+# --- Primary generator --------------------------------------------------
 /gun/particle proton
 /gun/energy 150 MeV
 
-# --- Salida (los comandos /analysis existen tras /run/initialize) -------
-# Extension .root en el nombre => un unico archivo fusionado en modo MT;
-# sin extension => CSV por hilo (default, ver README).
+# --- Output (the /analysis commands exist after /run/initialize) --------
+# A .root extension in the name => single natively merged file in MT mode.
+# Without extension => CSV; per-thread ntuple files are merged automatically
+# into a single "<name>_nt_slab.csv" at the end of the run (see README).
 /analysis/setFileName dedx_water_150MeV_cut1mm
 
-# --- Estadistica --------------------------------------------------------
+# --- Statistics ---------------------------------------------------------
 /run/beamOn 100000

@@ -1,11 +1,10 @@
 // ============================================================================
 // Run.hh
-// Subclase de G4Run que acumula, de forma segura entre hilos (cada hilo de
-// trabajo posee su propia instancia local; G4 llama a Merge() sobre la del
-// master), las sumas necesarias para las estadisticas de fin de run:
-// media y desviacion estandar del deposito de energia (straggling), balance
-// de energia por canales, y la comparacion contra G4EmCalculator al estilo
-// del reporte de TestEm0.
+// G4Run subclass that accumulates, thread-safely (each worker thread owns its
+// local instance; G4 calls Merge() on the master's), the sums needed for the
+// end-of-run statistics: mean and standard deviation of the energy deposit
+// (straggling), per-channel energy balance, and the comparison against
+// G4EmCalculator in the style of the TestEm0 report.
 // ============================================================================
 #ifndef Run_hh
 #define Run_hh 1
@@ -22,19 +21,19 @@ class Run : public G4Run
   explicit Run(const DetectorConstruction* det);
   ~Run() override = default;
 
-  // Registrado por RunAction::BeginOfRunAction en los hilos de trabajo,
-  // a partir del G4ParticleGun (patron de los ejemplos TestEm).
+  // Registered by RunAction::BeginOfRunAction on the worker threads from the
+  // G4ParticleGun (TestEm examples pattern).
   void SetPrimary(const G4ParticleDefinition* particle, G4double energy);
 
-  // Registrado por EventAction::EndOfEventAction, una vez por evento.
-  //   exitEnergy < 0 significa que el primario NO salio del slab.
+  // Registered by EventAction::EndOfEventAction, once per event.
+  //   exitEnergy < 0 means the primary did NOT exit the slab.
   void AddEvent(G4double edepPrimary, G4double edepSecondary,
                 G4double escapedSecondary, G4double exitEnergy,
                 G4double trackLength);
 
   void Merge(const G4Run* aRun) override;
 
-  // Reporte de consola (solo lo llama el master en EndOfRunAction).
+  // Console report (called by the master only, in EndOfRunAction).
   void EndOfRun() const;
 
  private:
@@ -43,13 +42,13 @@ class Run : public G4Run
   const G4ParticleDefinition* fParticle = nullptr;
   G4double fEkin = 0.;
 
-  G4double fSumEdepTotal = 0.;   // primario + secundarios (por evento)
-  G4double fSumEdepTotal2 = 0.;  // suma de cuadrados, para el straggling
+  G4double fSumEdepTotal = 0.;   // primary + secondaries (per event)
+  G4double fSumEdepTotal2 = 0.;  // sum of squares, for the straggling
   G4double fSumEdepPrimary = 0.;
   G4double fSumEdepSecondary = 0.;
   G4double fSumEscapedSecondary = 0.;
-  G4double fSumExitEnergy = 0.;  // solo eventos en que el primario sale
-  G4long fNExit = 0;             // numero de eventos con primario saliente
+  G4double fSumExitEnergy = 0.;  // only events where the primary exits
+  G4long fNExit = 0;             // number of events with an exiting primary
   G4double fSumTrackLength = 0.;
   G4long fNEvents = 0;
 };

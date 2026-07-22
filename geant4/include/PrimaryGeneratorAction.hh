@@ -1,8 +1,8 @@
 // ============================================================================
 // PrimaryGeneratorAction.hh
-// G4ParticleGun con un proton monoenergetico por evento, dirigido en +z,
-// nacido justo antes de la cara de entrada del slab. La energia se fija por
-// macro con el comando estandar /gun/energy (sin messenger adicional).
+// G4ParticleGun with one monoenergetic proton per event, directed along +z,
+// born just upstream of the slab entrance face. The energy is set per macro
+// with the standard /gun/energy command (no additional messenger).
 // ============================================================================
 #ifndef PrimaryGeneratorAction_hh
 #define PrimaryGeneratorAction_hh 1

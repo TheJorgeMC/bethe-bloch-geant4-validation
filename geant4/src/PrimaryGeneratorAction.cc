@@ -12,18 +12,18 @@
 
 namespace
 {
-// El proton nace en z = -kGunOffsetFactor * espesor: entre la cara de
-// entrada del slab (z = -0.5*t) y el borde del Envelope (z = -0.6*t),
-// dentro del World de aire. El trayecto de aire recorrido antes de entrar
-// al slab es de 0.15*t (p.ej. 0.75 mm para t = 5 mm), cuya perdida de
-// energia es despreciable frente a las energias de este estudio.
+// The proton is born at z = -kGunOffsetFactor * thickness: between the slab
+// entrance face (z = -0.5*t) and the Envelope edge (z = -0.6*t), inside the
+// air World. The air path traversed before entering the slab is 0.15*t
+// (e.g. 0.75 mm for t = 5 mm), whose energy loss is negligible compared
+// with the energies of this study.
 constexpr G4double kGunOffsetFactor = 0.65;
 
-// Energia por defecto (sobreescribible con /gun/energy en las macros).
+// Default energy (overridable with /gun/energy in the macros).
 constexpr G4double kDefaultEnergy = 150.0 * CLHEP::MeV;
 
-// Un proton primario por evento (requisito de diseño): la estadistica se
-// acumula con /run/beamOn N.
+// One primary proton per event (design requirement): statistics are
+// accumulated with /run/beamOn N.
 constexpr G4int kParticlesPerEvent = 1;
 }  // namespace
 
@@ -46,9 +46,9 @@ PrimaryGeneratorAction::~PrimaryGeneratorAction()
 
 void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
 {
-  // La posicion se recalcula en cada evento a partir del espesor actual del
-  // slab, de modo que los cambios de geometria por macro (/absorber/thickness)
-  // reposicionan automaticamente el vertice primario sin recompilar.
+  // The position is recomputed every event from the current slab thickness,
+  // so macro-driven geometry changes (/absorber/thickness) automatically
+  // reposition the primary vertex without recompiling.
   const G4double z0 = -kGunOffsetFactor * fDetector->GetThickness();
   fGun->SetParticlePosition(G4ThreeVector(0., 0., z0));
   fGun->GeneratePrimaryVertex(event);

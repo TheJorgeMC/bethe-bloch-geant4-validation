@@ -49,15 +49,15 @@ void EventAction::AddSecondaryEdep(G4double edep, G4int layer)
 
 void EventAction::EndOfEventAction(const G4Event* event)
 {
-  // Energia cinetica del primario al nacer, leida del vertice del evento
-  // (robusto frente a cambios de /gun/energy entre runs).
+  // Primary kinetic energy at birth, read from the event vertex (robust
+  // against /gun/energy changes between runs).
   G4double eIncident = 0.;
   if (event->GetPrimaryVertex() != nullptr &&
       event->GetPrimaryVertex()->GetPrimary() != nullptr) {
     eIncident = event->GetPrimaryVertex()->GetPrimary()->GetKineticEnergy();
   }
 
-  // --- Ntuple: una fila por evento, en MeV y mm -------------------------
+  // --- Ntuple: one row per event, in MeV and mm ---------------------------
   auto* am = G4AnalysisManager::Instance();
   am->FillNtupleDColumn(analysis::kColEIncident, eIncident / MeV);
   am->FillNtupleDColumn(analysis::kColEdepPrimary, fEdepPrimary / MeV);
@@ -70,9 +70,10 @@ void EventAction::EndOfEventAction(const G4Event* event)
                         fPrimaryTrackLength / mm);
   am->AddNtupleRow();
 
-  // --- Histograma de dosis en profundidad (suma sobre eventos) ----------
-  // Cada capa aporta su deposito en el centro geometrico del bin. Con
-  // numberOfLayers = 1 degenera en un unico bin (deposito total).
+  // --- Depth-dose histogram (summed over events) --------------------------
+  // Each layer contributes its deposit at the geometric center of the bin.
+  // With numberOfLayers = 1 this degenerates into a single bin (total
+  // deposit).
   const G4int nLayers = static_cast<G4int>(fLayerEdep.size());
   const G4double layerThicknessMM =
       (fDetector->GetThickness() / mm) / nLayers;
@@ -83,7 +84,7 @@ void EventAction::EndOfEventAction(const G4Event* event)
     }
   }
 
-  // --- Sumas del run (fusionadas entre hilos en Run::Merge) --------------
+  // --- Run sums (merged across threads in Run::Merge) ---------------------
   auto* run = static_cast<Run*>(
       G4RunManager::GetRunManager()->GetNonConstCurrentRun());
   run->AddEvent(fEdepPrimary, fEdepSecondary, fEscapedSecondary,

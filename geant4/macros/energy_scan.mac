@@ -1,22 +1,22 @@
 # ============================================================================
-# energy_scan.mac — barrido de energias para la curva dE/dx vs E
-# Uso: ./slab macros/energy_scan.mac
+# energy_scan.mac — energy sweep for the dE/dx vs E curve
+# Usage: ./slab macros/energy_scan.mac
 #
-# Condiciones COMUNES a todos los puntos del barrido (fijas aqui, una vez);
-# la energia y el nombre de archivo por punto los fija run_point.mac via el
-# alias {energy}. Para otro corte de produccion, cambiar /physics/absorberCut
-# Y el alias cutTag de forma consistente, de modo que el nombre de archivo
-# siga documentando el corte usado.
+# Conditions COMMON to every point of the sweep (fixed here, once); the
+# energy and output file name per point are set by run_point.mac through the
+# {energy} alias. For a different production cut, change /physics/absorberCut
+# AND the cutTag alias consistently, so the file name keeps documenting the
+# cut in use.
 #
-# Alternativa equivalente sin foreach: generar una familia de macros
-# run_<E>MeV.mac con macros/generate_energy_scan.py (ver README).
+# Equivalent alternative without foreach: generate a family of
+# run_<E>MeV.mac macros with macros/generate_energy_scan.py (see README).
 # ============================================================================
 /control/verbose 1
 /run/verbose 1
 /event/verbose 0
 /tracking/verbose 0
 
-# --- Condiciones comunes ------------------------------------------------
+# --- Common conditions --------------------------------------------------
 /absorber/material G4_WATER
 /absorber/thickness 5 mm
 /absorber/sizeXY 10 cm
@@ -29,8 +29,8 @@
 
 /gun/particle proton
 
-# --- Barrido: un run por energia (diseño, seccion 3.2) ------------------
-# Banda: regimen no relativista bajo (50), banda clinica de protonterapia
-# (70-250) y puntos altos (500, 1000) para el ascenso relativista / efecto
-# densidad.
+# --- Sweep: one run per energy (design, section 3.2) --------------------
+# Band: low non-relativistic regime (50), clinical proton-therapy band
+# (70-250) and high points (500, 1000) for the relativistic rise / density
+# effect.
 /control/foreach macros/run_point.mac energy "50 70 100 150 200 250 500 1000"

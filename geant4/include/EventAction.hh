@@ -1,8 +1,7 @@
 // ============================================================================
 // EventAction.hh
-// Acumuladores por evento, alimentados por SteppingAction. Al final del
-// evento llena el ntuple, el histograma de dosis en profundidad y las sumas
-// del objeto Run.
+// Per-event accumulators, fed by SteppingAction. At the end of the event it
+// fills the ntuple, the depth-dose histogram and the Run object's sums.
 // ============================================================================
 #ifndef EventAction_hh
 #define EventAction_hh 1
@@ -23,7 +22,7 @@ class EventAction : public G4UserEventAction
   void BeginOfEventAction(const G4Event*) override;
   void EndOfEventAction(const G4Event*) override;
 
-  // --- Interfaz para SteppingAction -------------------------------------
+  // --- Interface for SteppingAction --------------------------------------
   void AddPrimaryEdep(G4double edep, G4int layer);
   void AddSecondaryEdep(G4double edep, G4int layer);
   void AddEscapedSecondary(G4double ekin) { fEscapedSecondary += ekin; }
@@ -38,9 +37,9 @@ class EventAction : public G4UserEventAction
   G4double fEdepPrimary = 0.;
   G4double fEdepSecondary = 0.;
   G4double fEscapedSecondary = 0.;
-  G4double fPrimaryExitEnergy = -1.;  // -1 = el primario no salio del slab
+  G4double fPrimaryExitEnergy = -1.;  // -1 = the primary did not exit the slab
   G4double fPrimaryTrackLength = 0.;
-  std::vector<G4double> fLayerEdep;   // deposito por capa (curva de Bragg)
+  std::vector<G4double> fLayerEdep;   // deposit per layer (Bragg curve)
 };
 
 #endif

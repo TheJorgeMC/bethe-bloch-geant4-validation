@@ -1,8 +1,8 @@
 // ============================================================================
 // AnalysisDefs.hh
-// Identificadores compartidos de histogramas y columnas del ntuple, para que
-// RunAction (que los crea) y EventAction (que los llena) no dependan de
-// literales duplicados.
+// Shared histogram and ntuple-column identifiers, so that RunAction (which
+// creates them) and EventAction (which fills them) do not rely on duplicated
+// literals.
 // ============================================================================
 #ifndef AnalysisDefs_hh
 #define AnalysisDefs_hh 1
@@ -11,20 +11,20 @@
 
 namespace analysis
 {
-// --- Histogramas 1D ---
-// H1 0: energia depositada vs profundidad z en el slab (curva de Bragg si
-//       /absorber/numberOfLayers > 1). Se rebinnea en cada BeginOfRunAction.
+// --- 1D histograms ---
+// H1 0: energy deposited vs depth z in the slab (Bragg curve when
+//       /absorber/numberOfLayers > 1). Rebinned at every BeginOfRunAction.
 constexpr G4int kH1Depth = 0;
 
-// --- Columnas del ntuple "slab" (una fila por evento, todas en MeV/mm) ---
+// --- Columns of the "slab" ntuple (one row per event, all in MeV/mm) ---
 enum NtupleColumns : G4int
 {
-  kColEIncident = 0,       // energia cinetica del proton primario al nacer
-  kColEdepPrimary = 1,     // energia depositada en el slab por el primario
-  kColEdepSecondary = 2,   // energia depositada en el slab por secundarios
-  kColEEscapedSec = 3,     // energia cinetica sacada del slab por secundarios
-  kColEExitPrimary = 4,    // energia cinetica del primario al salir (-1 si no sale)
-  kColTrackLenPrimary = 5  // longitud de traza del primario dentro del slab
+  kColEIncident = 0,       // primary proton kinetic energy at birth
+  kColEdepPrimary = 1,     // energy deposited in the slab by the primary
+  kColEdepSecondary = 2,   // energy deposited in the slab by secondaries
+  kColEEscapedSec = 3,     // kinetic energy carried out of the slab by secondaries
+  kColEExitPrimary = 4,    // primary kinetic energy on exit (-1 if it never exits)
+  kColTrackLenPrimary = 5  // primary track length inside the slab
 };
 }  // namespace analysis
 

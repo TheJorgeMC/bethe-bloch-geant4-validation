@@ -1,22 +1,22 @@
 // ============================================================================
 // PhysicsList.hh
-// Lista modular minima: SOLO fisica electromagnetica estandar
-// (G4EmStandardPhysics_option4 por defecto; option3 seleccionable como
-// chequeo de sensibilidad via argumento de linea de comandos en slab.cc:
+// Minimal modular list: ONLY standard electromagnetic physics
+// (G4EmStandardPhysics_option4 by default; option3 selectable as a
+// sensitivity check via command-line argument in slab.cc:
 //   ./slab run.mac 3
 // ).
 //
-// Deliberadamente SIN fisica hadronica: para protones atravesando un slab
-// delgado, las reacciones nucleares inelasticas son un efecto de segundo
-// orden para la validacion de dE/dx y solo añadirian un canal de perdida de
-// primarios y tiempo de computo (decision documentada en el diseño, seccion 4).
+// Deliberately WITHOUT hadronic physics: for protons crossing a thin slab,
+// inelastic nuclear reactions are a second-order effect for the dE/dx
+// validation and would only add a primary-loss channel and computing time
+// (decision documented in the design, section 4).
 //
-// Corte de produccion especifico del slab:
-//   /physics/absorberCut <valor> <unidad>   (default 1 mm)
-// aplicado a la G4Region "AbsorberRegion" en SetCuts(). Este corte fija el
-// umbral T_cut de produccion explicita de rayos delta y, por tanto, define
-// que dE/dx restringido usa el proceso continuo de ionizacion (diseño,
-// seccion 5).
+// Slab-specific production cut:
+//   /physics/absorberCut <value> <unit>   (default 1 mm)
+// applied to the G4Region "AbsorberRegion" in SetCuts(). This cut sets the
+// threshold T_cut for explicit delta-ray production and therefore defines
+// which restricted dE/dx the continuous ionisation process uses (design,
+// section 5).
 // ============================================================================
 #ifndef PhysicsList_hh
 #define PhysicsList_hh 1
@@ -35,11 +35,11 @@ class PhysicsList : public G4VModularPhysicsList
 
   void SetCuts() override;
 
-  // Invocado por el messenger /physics/absorberCut
+  // Invoked by the /physics/absorberCut messenger
   void SetAbsorberCut(G4double value);
 
  private:
-  G4double fAbsorberCut;  // corte de produccion (longitud) para AbsorberRegion
+  G4double fAbsorberCut;  // production cut (length) for AbsorberRegion
   G4GenericMessenger* fMessenger = nullptr;
 };
 

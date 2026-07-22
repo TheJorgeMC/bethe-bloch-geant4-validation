@@ -22,20 +22,20 @@
 
 namespace
 {
-// Factores de tamaño relativos al slab (sin "magic numbers" dispersos).
-// El World es 1.4x el slab en cada eje; el Envelope, 1.2x. El Envelope es
-// un gancho opcional para overlays de scoring o cambios de material de
-// fondo sin tocar el World (ver documento de diseño, sección 2.1).
+// Size factors relative to the slab (no scattered "magic numbers").
+// The World is 1.4x the slab along each axis; the Envelope, 1.2x. The
+// Envelope is an optional hook for scoring overlays or for changing the
+// background material without touching the World (design document, sec. 2.1).
 constexpr G4double kWorldScale = 1.4;
 constexpr G4double kEnvelopeScale = 1.2;
 
-// Defaults de la geometría
+// Geometry defaults
 constexpr G4double kDefaultThickness = 5.0 * CLHEP::mm;
 constexpr G4double kDefaultSizeXY = 10.0 * CLHEP::cm;
 constexpr G4int kDefaultNumberOfLayers = 1;
 const G4String kDefaultMaterial = "G4_WATER";
 
-// Chequeo de overlaps en todos los G4PVPlacement (requisito de diseño).
+// Overlap check in every G4PVPlacement (design requirement).
 constexpr G4bool kCheckOverlaps = true;
 }  // namespace
 
@@ -57,10 +57,10 @@ DetectorConstruction::~DetectorConstruction()
 
 void DetectorConstruction::CleanupGeometry()
 {
-  // Al reconstruir la geometría tras un cambio por macro hay que limpiar los
-  // stores; si no, los volúmenes viejos quedan colgando y Geant4 aborta.
-  // Antes de limpiar, desregistramos el volumen raíz de la región para no
-  // dejar un puntero colgante dentro de "AbsorberRegion".
+  // When rebuilding the geometry after a macro-driven change the stores must
+  // be cleaned; otherwise stale volumes are left dangling and Geant4 aborts.
+  // Before cleaning, unregister the root logical volume from the region so
+  // that "AbsorberRegion" is not left holding a dangling pointer.
   if (fRegion != nullptr && fAbsorberLV != nullptr) {
     fRegion->RemoveRootLogicalVolume(fAbsorberLV, false);
   }
@@ -83,11 +83,11 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   G4Material* air = nist->FindOrBuildMaterial("G4_AIR");
 
   // --------------------------------------------------------------------------
-  // World: caja de aire 1.4x el slab. Nota física: el protón primario nace en
-  // aire a ~0.15*espesor de la cara de entrada (ver PrimaryGeneratorAction);
-  // la pérdida de energía en ese trayecto de aire es despreciable (<1 keV
-  // para las energías de este estudio), pero si se quisiera eliminar por
-  // completo bastaría cambiar el material del World a G4_Galactic aquí.
+  // World: air box, 1.4x the slab. Physics note: the primary proton is born
+  // in air at ~0.15*thickness upstream of the entrance face (see
+  // PrimaryGeneratorAction); the energy loss along that air path is
+  // negligible (<1 keV for the energies of this study). To remove it
+  // entirely, change the World material to G4_Galactic here.
   // --------------------------------------------------------------------------
   const G4double worldHalfXY = 0.5 * kWorldScale * fSizeXY;
   const G4double worldHalfZ = 0.5 * kWorldScale * fThickness;
@@ -97,7 +97,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
                                false, 0, kCheckOverlaps);
 
   // --------------------------------------------------------------------------
-  // Envelope: mismo material que el World, 1.2x el slab.
+  // Envelope: same material as the World, 1.2x the slab.
   // --------------------------------------------------------------------------
   const G4double envHalfXY = 0.5 * kEnvelopeScale * fSizeXY;
   const G4double envHalfZ = 0.5 * kEnvelopeScale * fThickness;
@@ -107,10 +107,10 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
                     false, 0, kCheckOverlaps);
 
   // --------------------------------------------------------------------------
-  // Slab absorbedor: G4Box con el eje del haz en z.
-  // Si fNumberOfLayers > 1, el slab contenedor se subdivide en capas iguales
-  // mediante G4PVReplica a lo largo de kZAxis; cada capa recibe un índice de
-  // copia (copyNo) que SteppingAction usa para el scoring por profundidad.
+  // Absorber slab: G4Box with the beam axis along z.
+  // If fNumberOfLayers > 1, the slab container is subdivided into equal
+  // layers with G4PVReplica along kZAxis; each layer carries a copy number
+  // (copyNo) that SteppingAction uses for depth scoring.
   // --------------------------------------------------------------------------
   auto* slabSolid =
       new G4Box("Absorber", 0.5 * fSizeXY, 0.5 * fSizeXY, 0.5 * fThickness);
@@ -122,11 +122,11 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
     const G4double layerThickness = fThickness / fNumberOfLayers;
     auto* layerSolid = new G4Box("Layer", 0.5 * fSizeXY, 0.5 * fSizeXY,
                                  0.5 * layerThickness);
-    // La capa debe tener el mismo material que el contenedor (la réplica
-    // llena completamente a su madre).
+    // The layer must use the same material as the container (a replica
+    // fills its mother volume completely).
     fLayerLV = new G4LogicalVolume(layerSolid, fAbsorberMaterial, "Layer");
-    // G4PVReplica no acepta bandera de chequeo de overlaps: la subdivisión
-    // regular es exacta por construcción.
+    // G4PVReplica takes no overlap-check flag: the regular subdivision is
+    // exact by construction.
     new G4PVReplica("Layer", fLayerLV, fAbsorberLV, kZAxis, fNumberOfLayers,
                     layerThickness);
   } else {
@@ -134,8 +134,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   }
 
   // --------------------------------------------------------------------------
-  // Región propia del slab, para cortes de producción locales
-  // (/physics/absorberCut, ver PhysicsList::SetCuts()).
+  // Dedicated region for the slab, enabling local production cuts
+  // (/physics/absorberCut, see PhysicsList::SetCuts()).
   // --------------------------------------------------------------------------
   fRegion = G4RegionStore::GetInstance()->GetRegion(kRegionName, false);
   if (fRegion == nullptr) {
@@ -143,7 +143,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   }
   fRegion->AddRootLogicalVolume(fAbsorberLV);
 
-  // --- Atributos de visualización mínimos ---
+  // --- Minimal visualization attributes ---
   fWorldLV->SetVisAttributes(G4VisAttributes::GetInvisible());
   auto* envVis = new G4VisAttributes(G4Colour(0.7, 0.7, 0.7, 0.1));
   envVis->SetForceWireframe(true);
@@ -152,26 +152,26 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
   slabVis->SetForceSolid(true);
   fAbsorberLV->SetVisAttributes(slabVis);
 
-  G4cout << "### DetectorConstruction: slab de "
-         << fAbsorberMaterial->GetName() << ", espesor "
-         << G4BestUnit(fThickness, "Length") << ", seccion "
+  G4cout << "### DetectorConstruction: slab of "
+         << fAbsorberMaterial->GetName() << ", thickness "
+         << G4BestUnit(fThickness, "Length") << ", cross section "
          << G4BestUnit(fSizeXY, "Length") << " x "
          << G4BestUnit(fSizeXY, "Length") << ", " << fNumberOfLayers
-         << " capa(s)" << G4endl;
+         << " layer(s)" << G4endl;
 
   return fWorldPV;
 }
 
 // ----------------------------------------------------------------------------
-// Setters de mensajería. La reconstrucción efectiva la dispara
-// DetectorMessenger tras llamar a estos métodos (ver DetectorMessenger.cc).
+// Messenger setters. The actual rebuild is triggered by DetectorMessenger
+// after calling these methods (see DetectorMessenger.cc).
 // ----------------------------------------------------------------------------
 void DetectorConstruction::SetAbsorberMaterial(const G4String& nistName)
 {
   G4Material* mat = G4NistManager::Instance()->FindOrBuildMaterial(nistName);
   if (mat == nullptr) {
-    G4cerr << "### DetectorConstruction: material NIST desconocido '"
-           << nistName << "'. Se conserva "
+    G4cerr << "### DetectorConstruction: unknown NIST material '"
+           << nistName << "'. Keeping "
            << fAbsorberMaterial->GetName() << G4endl;
     return;
   }
@@ -181,7 +181,7 @@ void DetectorConstruction::SetAbsorberMaterial(const G4String& nistName)
 void DetectorConstruction::SetThickness(G4double value)
 {
   if (value <= 0.) {
-    G4cerr << "### DetectorConstruction: espesor invalido, se ignora" << G4endl;
+    G4cerr << "### DetectorConstruction: invalid thickness, ignored" << G4endl;
     return;
   }
   fThickness = value;
@@ -190,7 +190,7 @@ void DetectorConstruction::SetThickness(G4double value)
 void DetectorConstruction::SetSizeXY(G4double value)
 {
   if (value <= 0.) {
-    G4cerr << "### DetectorConstruction: sizeXY invalido, se ignora" << G4endl;
+    G4cerr << "### DetectorConstruction: invalid sizeXY, ignored" << G4endl;
     return;
   }
   fSizeXY = value;
@@ -199,7 +199,7 @@ void DetectorConstruction::SetSizeXY(G4double value)
 void DetectorConstruction::SetNumberOfLayers(G4int n)
 {
   if (n < 1) {
-    G4cerr << "### DetectorConstruction: numberOfLayers < 1, se ignora"
+    G4cerr << "### DetectorConstruction: numberOfLayers < 1, ignored"
            << G4endl;
     return;
   }

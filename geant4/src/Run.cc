@@ -43,8 +43,8 @@ void Run::AddEvent(G4double edepPrimary, G4double edepSecondary,
 
 void Run::Merge(const G4Run* aRun)
 {
-  // Fusion thread-safe: G4 la invoca secuencialmente sobre el Run del master
-  // con cada Run local de los hilos de trabajo.
+  // Thread-safe merge: G4 invokes this sequentially on the master's Run with
+  // each worker thread's local Run.
   const Run* localRun = static_cast<const Run*>(aRun);
 
   if (fParticle == nullptr) {
@@ -67,7 +67,7 @@ void Run::Merge(const G4Run* aRun)
 void Run::EndOfRun() const
 {
   if (fNEvents == 0 || fParticle == nullptr) {
-    G4cout << "### Run::EndOfRun: sin eventos, nada que reportar" << G4endl;
+    G4cout << "### Run::EndOfRun: no events, nothing to report" << G4endl;
     return;
   }
 
@@ -75,7 +75,7 @@ void Run::EndOfRun() const
   const G4double thickness = fDetector->GetThickness();
   const G4double n = static_cast<G4double>(fNEvents);
 
-  // --- Estadisticas de la simulacion -----------------------------------
+  // --- Simulation statistics ---------------------------------------------
   const G4double meanEdep = fSumEdepTotal / n;
   G4double rms2 = fSumEdepTotal2 / n - meanEdep * meanEdep;
   const G4double rmsEdep = (rms2 > 0.) ? std::sqrt(rms2) : 0.;
@@ -83,92 +83,92 @@ void Run::EndOfRun() const
   const G4double meanEdepSec = fSumEdepSecondary / n;
   const G4double meanEscaped = fSumEscapedSecondary / n;
   const G4double meanTrackLen = fSumTrackLength / n;
-  const G4double meanExitAll = fSumExitEnergy / n;  // 0 para los que no salen
+  const G4double meanExitAll = fSumExitEnergy / n;  // 0 for non-exiting ones
   const G4double meanExit =
       (fNExit > 0) ? fSumExitEnergy / static_cast<G4double>(fNExit) : 0.;
 
-  // dE/dx "local" simulado: energia depositada por el PRIMARIO por unidad de
-  // espesor. Aproxima el dE/dx RESTRINGIDO (la perdida continua del proceso
-  // de ionizacion) mas los depositos discretos que quedan bajo umbral.
+  // Simulated "local" dE/dx: energy deposited by the PRIMARY per unit
+  // thickness. Approximates the RESTRICTED dE/dx (the continuous energy loss
+  // of the ionisation process) plus below-threshold discrete deposits.
   const G4double dedxPrimSim = meanEdepPrim / thickness;
 
-  // dE/dx "total" simulado: perdida de energia del primario por unidad de
-  // espesor, incluyendo la energia cedida a los rayos delta explicitos
-  // (= Einc - Esalida, promediada). Aproxima el dE/dx NO RESTRINGIDO cuando
-  // el slab es delgado.
+  // Simulated "total" dE/dx: primary energy loss per unit thickness,
+  // including the energy handed to explicit delta rays
+  // (= Einc - Eexit, averaged). Approximates the UNRESTRICTED dE/dx for a
+  // thin slab.
   const G4double dedxTotalSim =
       (fNExit == fNEvents) ? (fEkin - meanExit) / thickness : 0.;
 
-  // --- Valores de referencia de G4EmCalculator (patron TestEm0) ---------
+  // --- Reference values from G4EmCalculator (TestEm0 pattern) ------------
   G4EmCalculator emCal;
   const G4Region* region = G4RegionStore::GetInstance()->GetRegion(
       DetectorConstruction::kRegionName, false);
 
-  // Restringido: dE/dx tabulado del proceso de ionizacion con el corte
-  // activo en la region del slab.
+  // Restricted: tabulated dE/dx of the ionisation process with the cut
+  // active in the slab region.
   const G4double dedxRestricted =
       emCal.GetDEDX(fEkin, fParticle, material, region);
 
-  // No restringido: dE/dx electronico calculado con T_cut = DBL_MAX
-  // (es decir, integrando hasta T_max). Esta es la cantidad comparable con
-  // la formula de Bethe-Bloch "de libro de texto".
+  // Unrestricted: electronic dE/dx computed with T_cut = DBL_MAX (i.e.
+  // integrating up to T_max). This is the quantity comparable with the
+  // "textbook" Bethe-Bloch formula.
   const G4double dedxUnrestricted =
       emCal.ComputeElectronicDEDX(fEkin, fParticle, material, DBL_MAX);
 
-  // Rango CSDA (requiere G4EmParameters::SetBuildCSDARange(true), activado
-  // en el constructor de PhysicsList).
+  // CSDA range (requires G4EmParameters::SetBuildCSDARange(true), enabled
+  // in the PhysicsList constructor).
   const G4double csdaRange = emCal.GetCSDARange(fEkin, fParticle, material);
 
-  // --- Balance de energia por evento ------------------------------------
-  // Einc ≈ Edep(prim) + Edep(sec) + E(escapada por sec) + E(salida prim).
-  // El residuo refleja canales no contabilizados (p.ej. fotones de
-  // fluorescencia que escapan, redondeo numerico) y debe ser pequeño.
+  // --- Per-event energy balance -------------------------------------------
+  // Einc ~ Edep(prim) + Edep(sec) + E(escaped via sec) + E(primary exit).
+  // The residual reflects unaccounted channels (e.g. fluorescence photons
+  // escaping, numerical rounding) and must be small.
   const G4double balance =
       meanEdepPrim + meanEdepSec + meanEscaped + meanExitAll;
   const G4double residual = fEkin - balance;
 
   G4cout << "\n============================================================\n"
-         << " Resumen del run — validacion Bethe-Bloch\n"
+         << " Run summary — Bethe-Bloch validation\n"
          << "============================================================\n"
-         << " Primario           : " << fParticle->GetParticleName() << ", E = "
+         << " Primary            : " << fParticle->GetParticleName() << ", E = "
          << G4BestUnit(fEkin, "Energy") << "\n"
          << " Material           : " << material->GetName() << "\n"
-         << " Espesor del slab   : " << G4BestUnit(thickness, "Length") << "\n"
-         << " Eventos            : " << fNEvents << "\n"
+         << " Slab thickness     : " << G4BestUnit(thickness, "Length") << "\n"
+         << " Events             : " << fNEvents << "\n"
          << "------------------------------------------------------------\n"
          << " <Edep total>       : " << G4BestUnit(meanEdep, "Energy")
          << "  (rms/straggling: " << G4BestUnit(rmsEdep, "Energy") << ")\n"
-         << " <Edep primario>    : " << G4BestUnit(meanEdepPrim, "Energy") << "\n"
-         << " <Edep secundarios> : " << G4BestUnit(meanEdepSec, "Energy") << "\n"
-         << " <E escapada (sec)> : " << G4BestUnit(meanEscaped, "Energy") << "\n"
-         << " Primarios salientes: " << fNExit << " / " << fNEvents;
+         << " <Edep primary>     : " << G4BestUnit(meanEdepPrim, "Energy") << "\n"
+         << " <Edep secondaries> : " << G4BestUnit(meanEdepSec, "Energy") << "\n"
+         << " <E escaped (sec)>  : " << G4BestUnit(meanEscaped, "Energy") << "\n"
+         << " Exiting primaries  : " << fNExit << " / " << fNEvents;
   if (fNExit > 0) {
-    G4cout << "   <E salida> = " << G4BestUnit(meanExit, "Energy");
+    G4cout << "   <E exit> = " << G4BestUnit(meanExit, "Energy");
   }
-  G4cout << "\n <longitud de traza>: " << G4BestUnit(meanTrackLen, "Length")
+  G4cout << "\n <track length>     : " << G4BestUnit(meanTrackLen, "Length")
          << "\n"
          << "------------------------------------------------------------\n"
-         << " dE/dx sim (local, ~restringido)   : "
+         << " dE/dx sim (local, ~restricted)     : "
          << G4BestUnit(dedxPrimSim, "Energy/Length") << "\n";
   if (dedxTotalSim > 0.) {
-    G4cout << " dE/dx sim (Einc-Esal, ~total)     : "
+    G4cout << " dE/dx sim (Einc-Eexit, ~total)     : "
            << G4BestUnit(dedxTotalSim, "Energy/Length") << "\n";
   } else {
-    G4cout << " dE/dx sim (Einc-Esal, ~total)     : n/a (no todos los "
-              "primarios salieron del slab)\n";
+    G4cout << " dE/dx sim (Einc-Eexit, ~total)     : n/a (not all primaries "
+              "exited the slab)\n";
   }
-  G4cout << " G4EmCalculator dE/dx restringido  : "
+  G4cout << " G4EmCalculator restricted dE/dx    : "
          << G4BestUnit(dedxRestricted, "Energy/Length") << "\n"
-         << " G4EmCalculator dE/dx NO restringido: "
+         << " G4EmCalculator UNRESTRICTED dE/dx  : "
          << G4BestUnit(dedxUnrestricted, "Energy/Length") << "\n"
-         << " G4EmCalculator rango CSDA         : "
+         << " G4EmCalculator CSDA range          : "
          << G4BestUnit(csdaRange, "Length") << "\n"
          << "------------------------------------------------------------\n"
-         << " Balance <por evento>: Edep_p + Edep_s + E_esc + E_sal = "
+         << " Balance <per event>: Edep_p + Edep_s + E_esc + E_exit = "
          << G4BestUnit(balance, "Energy") << "\n"
-         << " Residuo (Einc - balance)          : "
+         << " Residual (Einc - balance)          : "
          << G4BestUnit(residual, "Energy") << "  ("
-         << 100. * residual / fEkin << " % de Einc)\n"
+         << 100. * residual / fEkin << " % of Einc)\n"
          << "============================================================\n"
          << G4endl;
 }

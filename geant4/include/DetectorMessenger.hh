@@ -1,9 +1,9 @@
 // ============================================================================
 // DetectorMessenger.hh
-// Comandos de UI para la geometría del slab:
-//   /absorber/material <nombre NIST>
-//   /absorber/thickness <valor> <unidad>
-//   /absorber/sizeXY <valor> <unidad>
+// UI commands for the slab geometry:
+//   /absorber/material <NIST name>
+//   /absorber/thickness <value> <unit>
+//   /absorber/sizeXY <value> <unit>
 //   /absorber/numberOfLayers <N>
 // ============================================================================
 #ifndef DetectorMessenger_hh

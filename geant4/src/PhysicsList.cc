@@ -15,14 +15,14 @@
 #include "G4SystemOfUnits.hh"
 #include "G4UnitsTable.hh"
 
-#include "DetectorConstruction.hh"  // para kRegionName
+#include "DetectorConstruction.hh"  // for kRegionName
 
 namespace
 {
-// Corte de produccion por defecto: 1 mm (el default historico de Geant4).
-// En agua equivale a un umbral de ~350 keV para electrones: rayos delta por
-// debajo de ese umbral NO se generan explicitamente y su energia se integra
-// en la perdida continua (dE/dx restringido) del proton primario.
+// Default production cut: 1 mm (the historical Geant4 default). In water it
+// corresponds to an electron threshold of ~350 keV: delta rays below that
+// threshold are NOT generated explicitly and their energy is integrated
+// into the continuous energy loss (restricted dE/dx) of the primary proton.
 constexpr G4double kDefaultAbsorberCut = 1.0 * CLHEP::mm;
 }  // namespace
 
@@ -32,44 +32,44 @@ PhysicsList::PhysicsList(G4int emOption)
   SetVerboseLevel(1);
 
   // --------------------------------------------------------------------------
-  // Fisica electromagnetica. option4 es la variante EM mas precisa disponible
-  // (modelos de baja energia tipo Livermore/Penelope y parametros de precision
-  // mas finos); option3 se ofrece como chequeo de sensibilidad al modelo.
-  // Cualquier otro valor cae en option4 con un aviso.
+  // Electromagnetic physics. option4 is the most accurate EM variant
+  // available (low-energy Livermore/Penelope-type models and finer precision
+  // parameters); option3 is offered as a model-sensitivity check. Any other
+  // value falls back to option4 with a warning.
   // --------------------------------------------------------------------------
   if (emOption == 3) {
     RegisterPhysics(new G4EmStandardPhysics_option3());
     G4cout << "### PhysicsList: G4EmStandardPhysics_option3" << G4endl;
   } else {
     if (emOption != 4) {
-      G4cout << "### PhysicsList: opcion EM '" << emOption
-             << "' no reconocida; se usa option4" << G4endl;
+      G4cout << "### PhysicsList: EM option '" << emOption
+             << "' not recognized; using option4" << G4endl;
     }
     RegisterPhysics(new G4EmStandardPhysics_option4());
     G4cout << "### PhysicsList: G4EmStandardPhysics_option4" << G4endl;
   }
 
-  // NOTA sobre G4EmExtraPhysics: se OMITE deliberadamente. Ese constructor
-  // añade procesos gamma-nucleares, muon-nucleares y de synchrotron, ninguno
-  // relevante para la perdida de energia electromagnetica de protones en un
-  // slab. La dispersion multiple de Coulomb (que SI necesitamos) ya viene
-  // incluida en G4EmStandardPhysics_option3/4; no requiere G4EmExtraPhysics.
+  // NOTE on G4EmExtraPhysics: deliberately OMITTED. That constructor adds
+  // gamma-nuclear, muon-nuclear and synchrotron processes, none of which is
+  // relevant to the electromagnetic energy loss of protons in a slab. The
+  // Coulomb multiple scattering we DO need is already included in
+  // G4EmStandardPhysics_option3/4 and does not require G4EmExtraPhysics.
 
-  // Construir la tabla de rango CSDA para que G4EmCalculator::GetCSDARange()
-  // devuelva valores validos en el reporte de fin de run (Run::EndOfRun).
+  // Build the CSDA range table so that G4EmCalculator::GetCSDARange()
+  // returns valid values in the end-of-run report (Run::EndOfRun).
   G4EmParameters::Instance()->SetBuildCSDARange(true);
 
-  // Corte por defecto global (World y todo lo no cubierto por la region).
+  // Global default cut (World and everything not covered by the region).
   defaultCutValue = kDefaultAbsorberCut;
 
-  // Messenger: /physics/absorberCut <valor> <unidad>
+  // Messenger: /physics/absorberCut <value> <unit>
   fMessenger = new G4GenericMessenger(this, "/physics/",
-                                      "Parametros de la physics list");
+                                      "Physics list parameters");
   fMessenger
       ->DeclareMethodWithUnit("absorberCut", "mm",
                               &PhysicsList::SetAbsorberCut,
-                              "Corte de produccion (longitud) para la region "
-                              "AbsorberRegion. Equivalente al comando nativo "
+                              "Production cut (length) for the AbsorberRegion "
+                              "region. Equivalent to the native command "
                               "/run/setCutForRegion AbsorberRegion <v> <u>.")
       .SetStates(G4State_PreInit, G4State_Idle);
 }
@@ -82,9 +82,9 @@ PhysicsList::~PhysicsList()
 void PhysicsList::SetAbsorberCut(G4double value)
 {
   fAbsorberCut = value;
-  // Si ya estamos inicializados (estado Idle), hay que avisar al kernel para
-  // que reconstruya las tablas fisicas con el nuevo corte en el siguiente
-  // /run/beamOn; en PreInit no hace falta (SetCuts() aun no ha corrido).
+  // If we are already initialized (Idle state) the kernel must be told to
+  // rebuild the physics tables with the new cut at the next /run/beamOn;
+  // in PreInit this is unnecessary (SetCuts() has not run yet).
   if (G4StateManager::GetStateManager()->GetCurrentState() == G4State_Idle) {
     G4RunManager::GetRunManager()->PhysicsHasBeenModified();
   }
@@ -93,17 +93,17 @@ void PhysicsList::SetAbsorberCut(G4double value)
 void PhysicsList::SetCuts()
 {
   // ==========================================================================
-  // PROPOSITO FISICO (diseño, seccion 5): el corte de produccion se expresa
-  // como una LONGITUD que Geant4 traduce, material por material, a una
-  // energia umbral T_cut via la relacion rango-energia. Colisiones con
-  // transferencia < T_cut no generan rayo delta explicito: su energia se
-  // integra de forma continua en el paso del proton (dE/dx RESTRINGIDO).
-  // Colisiones con transferencia > T_cut generan un electron secundario que
-  // se transporta y deposita su energia en otro lugar. Por tanto:
-  //   dE/dx(no restringido) = dE/dx(restringido, T_cut)
-  //                          + energia llevada por deltas explicitos
-  // y el valor reportado por el proceso continuo DEPENDE del corte elegido:
-  // es una decision de diseño de la simulacion, no una constante fisica.
+  // PHYSICS PURPOSE (design, section 5): the production cut is expressed as
+  // a LENGTH that Geant4 translates, material by material, into a threshold
+  // energy T_cut through the range-energy relation. Collisions transferring
+  // less than T_cut do not spawn an explicit delta ray: their energy is
+  // integrated continuously into the proton step (RESTRICTED dE/dx).
+  // Collisions transferring more than T_cut spawn a secondary electron that
+  // is transported and deposits its energy elsewhere. Therefore:
+  //   dE/dx(unrestricted) = dE/dx(restricted, T_cut)
+  //                        + energy carried by explicit delta rays
+  // and the value reported by the continuous process DEPENDS on the chosen
+  // cut: it is a simulation design choice, not a physical constant.
   // ==========================================================================
   SetCutsWithDefault();
 
@@ -111,21 +111,21 @@ void PhysicsList::SetCuts()
       DetectorConstruction::kRegionName, false);
   if (region != nullptr) {
     auto* cuts = new G4ProductionCuts();
-    // El mismo corte de longitud para todas las especies secundarias
-    // relevantes. Para el estudio de rayos delta el decisivo es "e-".
+    // Same length cut for all relevant secondary species. For the delta-ray
+    // study the decisive one is "e-".
     cuts->SetProductionCut(fAbsorberCut, "gamma");
     cuts->SetProductionCut(fAbsorberCut, "e-");
     cuts->SetProductionCut(fAbsorberCut, "e+");
     cuts->SetProductionCut(fAbsorberCut, "proton");
     region->SetProductionCuts(cuts);
 
-    G4cout << "### PhysicsList: corte de produccion en "
+    G4cout << "### PhysicsList: production cut in "
            << DetectorConstruction::kRegionName << " = "
            << G4BestUnit(fAbsorberCut, "Length") << G4endl;
   } else {
-    G4cout << "### PhysicsList: aviso — la region "
+    G4cout << "### PhysicsList: warning — region "
            << DetectorConstruction::kRegionName
-           << " no existe todavia; solo se aplico el corte por defecto"
+           << " does not exist yet; only the default cut was applied"
            << G4endl;
   }
 
