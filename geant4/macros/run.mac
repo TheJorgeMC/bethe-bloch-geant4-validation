@@ -1,0 +1,42 @@
+# ============================================================================
+# run.mac — corrida de produccion en modo batch (sin visualizacion)
+# Uso: ./slab macros/run.mac        (EM option4)
+#      ./slab macros/run.mac 3     (EM option3, chequeo de sensibilidad)
+#
+# Esta macro es el REGISTRO REPRODUCIBLE de las condiciones de la corrida:
+# todos los parametros fisicos relevantes (material, espesor, capas, corte de
+# produccion, particula, energia) estan explicitos aqui. Archivar esta macro
+# junto con el archivo de datos que produce.
+# ============================================================================
+/control/verbose 0
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+# --- Geometria ----------------------------------------------------------
+/absorber/material G4_WATER
+/absorber/thickness 5 mm
+/absorber/sizeXY 10 cm
+/absorber/numberOfLayers 50
+
+# --- Corte de produccion de rayos delta (region AbsorberRegion) ---------
+# 1 mm en agua ~ 350 keV de umbral para electrones: define el T_cut del
+# dE/dx RESTRINGIDO reportado por el proceso continuo (diseño, seccion 5).
+/physics/absorberCut 1 mm
+# Alternativa "corte fino" (~ decenas de keV; casi todos los deltas
+# explicitos; el dE/dx continuo se acerca al no restringido, mas lento):
+# /physics/absorberCut 0.01 mm
+
+/run/initialize
+
+# --- Generador de primarios --------------------------------------------
+/gun/particle proton
+/gun/energy 150 MeV
+
+# --- Salida (los comandos /analysis existen tras /run/initialize) -------
+# Extension .root en el nombre => un unico archivo fusionado en modo MT;
+# sin extension => CSV por hilo (default, ver README).
+/analysis/setFileName dedx_water_150MeV_cut1mm
+
+# --- Estadistica --------------------------------------------------------
+/run/beamOn 100000

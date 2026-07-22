@@ -1,0 +1,36 @@
+# ============================================================================
+# energy_scan.mac — barrido de energias para la curva dE/dx vs E
+# Uso: ./slab macros/energy_scan.mac
+#
+# Condiciones COMUNES a todos los puntos del barrido (fijas aqui, una vez);
+# la energia y el nombre de archivo por punto los fija run_point.mac via el
+# alias {energy}. Para otro corte de produccion, cambiar /physics/absorberCut
+# Y el alias cutTag de forma consistente, de modo que el nombre de archivo
+# siga documentando el corte usado.
+#
+# Alternativa equivalente sin foreach: generar una familia de macros
+# run_<E>MeV.mac con macros/generate_energy_scan.py (ver README).
+# ============================================================================
+/control/verbose 1
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+# --- Condiciones comunes ------------------------------------------------
+/absorber/material G4_WATER
+/absorber/thickness 5 mm
+/absorber/sizeXY 10 cm
+/absorber/numberOfLayers 50
+
+/physics/absorberCut 1 mm
+/control/alias cutTag cut1mm
+
+/run/initialize
+
+/gun/particle proton
+
+# --- Barrido: un run por energia (diseño, seccion 3.2) ------------------
+# Banda: regimen no relativista bajo (50), banda clinica de protonterapia
+# (70-250) y puntos altos (500, 1000) para el ascenso relativista / efecto
+# densidad.
+/control/foreach macros/run_point.mac energy "50 70 100 150 200 250 500 1000"

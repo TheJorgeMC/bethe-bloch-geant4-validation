@@ -1,0 +1,9 @@
+# ============================================================================
+# run_point.mac — un punto del barrido de energias.
+# NO ejecutar directamente: lo invoca energy_scan.mac via /control/foreach,
+# que define el alias {energy} (en MeV). El alias {cutTag} viene tambien de
+# energy_scan.mac y documenta el corte de produccion en el nombre de archivo.
+# ============================================================================
+/gun/energy {energy} MeV
+/analysis/setFileName dedx_{energy}MeV_{cutTag}
+/run/beamOn 100000

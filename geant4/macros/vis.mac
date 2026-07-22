@@ -1,0 +1,44 @@
+# ============================================================================
+# vis.mac — visualizacion interactiva de la geometria y trazas
+# Uso: ./slab   (sin argumentos; se ejecuta automaticamente)
+# Solo para inspeccion visual y depuracion — NUNCA para produccion de datos.
+# ============================================================================
+/control/verbose 1
+/run/verbose 1
+
+# Geometria por defecto explicita (agua, 5 mm, sin segmentar)
+/absorber/material G4_WATER
+/absorber/thickness 5 mm
+/absorber/sizeXY 10 cm
+/absorber/numberOfLayers 1
+
+/run/initialize
+
+# --- Escena y visor -----------------------------------------------------
+/vis/open OGL 800x600-0+0
+/vis/viewer/set/autoRefresh false
+/vis/verbose errors
+
+/vis/drawVolume
+/vis/viewer/set/viewpointThetaPhi 90 0
+/vis/viewer/zoom 1.4
+
+# --- Trayectorias coloreadas por carga ----------------------------------
+#   verde = neutras, azul = positivas (protones), rojo = negativas (deltas)
+/vis/scene/add/trajectories smooth
+/vis/modeling/trajectories/create/drawByCharge
+/vis/modeling/trajectories/drawByCharge-0/set 0 green
+/vis/modeling/trajectories/drawByCharge-0/set 1 blue
+/vis/modeling/trajectories/drawByCharge-0/set -1 red
+/vis/modeling/trajectories/select drawByCharge-0
+
+# Acumular 20 eventos en pantalla
+/vis/scene/endOfEventAction accumulate 20
+
+/vis/viewer/set/autoRefresh true
+/vis/verbose warnings
+
+# --- Ejemplo: 20 protones de 150 MeV para inspeccion visual -------------
+/gun/particle proton
+/gun/energy 150 MeV
+/run/beamOn 20
