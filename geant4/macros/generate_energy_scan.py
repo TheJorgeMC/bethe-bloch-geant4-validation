@@ -69,7 +69,7 @@ SIZE_XY = "10 cm"
 N_LAYERS = 1
 CUT = "0.01 mm"
 CUT_TAG = "cut0p01mm"   # appears in the data file name
-N_EVENTS = 1000         # test statistics; raise for production
+N_EVENTS = 100000         # test statistics; raise for production
 
 # --- Thin-slab thickness rule ------------------------------------------------
 FRAC_RANGE = 0.05       # target fractional energy loss per slab (~5%)
