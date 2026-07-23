@@ -35,3 +35,6 @@ Thumbs.db
 # Carpetas de salida (analytic)
 matlab/analytic/output/
 python/analytic/output/
+/geant4/macros/energy_scan.mac
+/geant4/macros/run_point.mac
+/geant4/macros/run_scan/
