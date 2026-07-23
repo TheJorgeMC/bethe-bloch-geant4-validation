@@ -58,10 +58,23 @@
 import argparse
 import math
 import pathlib
+import numpy as np
 import pandas as pd
 
+import bragg_kleeman_materials as bk
+
+# --- Material -----------------------------------------------------------
+# One of bk.MATERIALS: "water", "air", "aluminium", "copper", "lead".
+# Only "water" is exercised by the current validation phase -- the rest of
+# the pipeline (analyze_dedx.C's cfg::kMaterialName/kZoverA/kI_eV/kDensity)
+# is still water-specific, so switching this alone does not yet retarget
+# the analysis. It is generalized first here so the sweep CAN be pointed
+# at any of the five materials once that pipeline is generalized too (see
+# referencias_y_decisiones.md).
+MATERIAL_KEY = "water"
+MATERIAL = bk.G4_MATERIAL_NAME[MATERIAL_KEY]  # Geant4 NIST material name
+
 # --- Common sweep conditions (edit here, not in the macros) -----------------
-MATERIAL = "G4_WATER"
 SIZE_XY = "10 cm"
 # Layers: 1 for the sweep (depth-dose segmentation is meaningless for
 # micrometer-thin low-energy slabs; use run.mac with 50 layers for Bragg
@@ -69,16 +82,30 @@ SIZE_XY = "10 cm"
 N_LAYERS = 1
 CUT = "0.01 mm"
 CUT_TAG = "cut0p01mm"   # appears in the data file name
-N_EVENTS = 100000         # test statistics; raise for production
+N_EVENTS = 1000         # test statistics; raise for production
 
 # --- Thin-slab thickness rule ------------------------------------------------
 FRAC_RANGE = 0.05       # target fractional energy loss per slab (~5%)
 T_MAX_MM = 5.0          # never thicker than the original design slab
 T_MIN_MM = 0.001        # 1 um floor (buildability/step-size sanity)
-# Bragg-Kleeman R = alpha * E^p for protons in water, CSDA approximation.
-# Source: doi:10.48550/arXiv.2011.00285 (alpha in cm with E in MeV).
-BK_A_CM = 0.002777
-BK_P = 1.723
+
+# Bragg-Kleeman R = alpha * E^p for protons, CSDA approximation. Water's
+# (alpha, p) come directly from doi:10.48550/arXiv.2011.00285; air,
+# aluminium, copper and lead are DERIVED from water via the generalized
+# Bragg-Kleeman range-scaling rule (Bragg & Kleeman, 1905), implemented in
+# bragg_kleeman_materials.py -- see that module for the full derivation,
+# the sourced material properties, and a self-check against the
+# independently confirmed air reference values (rho = 1.2929e-3 g/cm3,
+# sqrt(A_air) = 3.81). The fit grid below is only used to recover
+# (alpha, p) for aluminium/copper/lead by log-log regression through the
+# range curve computed with the scaling formula -- it does NOT need to
+# match the actual sweep grid, since the underlying relation is an exact
+# power law (any sufficiently wide, well-sampled grid recovers the same
+# constants to floating-point precision).
+bk.verify_air_reference_values()
+_FIT_ENERGIES_MEV = np.geomspace(3.0, 1000.0, 200)
+_MATERIAL_CONSTANTS = bk.derive_all_constants(_FIT_ENERGIES_MEV)
+BK_A_CM, BK_P = _MATERIAL_CONSTANTS[MATERIAL_KEY]
 
 
 def slab_thickness_mm(E_MeV: float) -> float:
@@ -258,6 +285,14 @@ def main() -> None:
     print("  ./slab macros/energy_scan.mac")
     print("\nNOTE: re-run cmake (or copy the regenerated macros) so the "
           "build dir picks up the new energy_scan.mac.")
+
+    print(f"\nActive material: {MATERIAL_KEY} ({MATERIAL}) — "
+          f"alpha = {BK_A_CM:.6e} cm/MeV^p, p = {BK_P:.4f}")
+    print("Bragg-Kleeman constants for all materials (water is the sourced "
+          "anchor; the rest are derived — see bragg_kleeman_materials.py):")
+    for key, (alpha, p) in _MATERIAL_CONSTANTS.items():
+        marker = "  <- active" if key == MATERIAL_KEY else ""
+        print(f"  {key:<12} alpha = {alpha:.6e} cm/MeV^p   p = {p:.4f}{marker}")
 
 
 if __name__ == "__main__":
