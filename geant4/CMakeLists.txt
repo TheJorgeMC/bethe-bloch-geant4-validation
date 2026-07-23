@@ -34,18 +34,31 @@ target_link_libraries(slab ${Geant4_LIBRARIES})
 #   ./slab macros/run.mac
 # works directly from the build tree.
 # ----------------------------------------------------------------------------
-set(SLAB_MACROS
-  macros/run.mac
-  macros/vis.mac
-  macros/energy_scan.mac
-  macros/run_point.mac
-  macros/generate_energy_scan.py
+# 1. Buscamos todos los archivos que coincidan con el patrón run_*.mac
+# RELATIVE: Nos devuelve la ruta relativa para que no se rompa tu bucle foreach
+# CONFIGURE_DEPENDS: Le avisa a CMake que si agregas un nuevo archivo .mac, debe reconfigurarse
+file(GLOB SCAN_MACROS
+        RELATIVE ${PROJECT_SOURCE_DIR}
+        CONFIGURE_DEPENDS
+        "${PROJECT_SOURCE_DIR}/macros/run_scan/run_*MeV.mac"
+        # Si quieres absolutamente TODOS los .mac de esa carpeta, usa "macros/run_scan/*.mac"
 )
+
+# 2. Definimos tus macros fijos y le concatenamos los que encontró GLOB
+set(SLAB_MACROS
+        macros/vis.mac
+        macros/energy_scan.mac
+        macros/run_point.mac
+        macros/generate_energy_scan.py
+        ${SCAN_MACROS}
+)
+
+# 3. Tu bucle original se mantiene intacto
 foreach(_macro ${SLAB_MACROS})
   configure_file(
-    ${PROJECT_SOURCE_DIR}/${_macro}
-    ${PROJECT_BINARY_DIR}/${_macro}
-    COPYONLY
+          ${PROJECT_SOURCE_DIR}/${_macro}
+          ${PROJECT_BINARY_DIR}/${_macro}
+          COPYONLY
   )
 endforeach()
 
