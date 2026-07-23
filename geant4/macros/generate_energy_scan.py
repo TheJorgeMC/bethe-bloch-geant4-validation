@@ -45,15 +45,15 @@ MATERIAL = "G4_WATER"
 THICKNESS = "5 mm"
 SIZE_XY = "10 cm"
 N_LAYERS = 50
-CUT = "1 mm"
-CUT_TAG = "cut1mm"   # appears in the data file name
+CUT = "0.01 mm"
+CUT_TAG = "cut0p01mm"   # appears in the data file name
 N_EVENTS = 1000      # test statistics; raise for production
 
 # Energy grid: preferred-number array, same as NIST PSTAR data in the range
 # 1 keV - 10 GeV, for direct cross-validation. Identical to
 # ../../nist_data/energy_grid.csv.
 NIST_GRID_CSV = pathlib.Path("../../nist_data/energy_grid.csv")
-E_MIN, E_MAX = 3.0, 1000.0  # range for --log
+E_MIN, E_MAX = 0.001, 1000.0  # range for --log
 
 # Output locations: per-point macros go to run_scan/; energy_scan.mac and
 # the run_point.mac stub are rewritten in place, next to this script.
@@ -206,10 +206,8 @@ def main() -> None:
 
     print("\nRun the sweep with either:")
     print(f'  for m in {OUT_DIR}/run_*MeV.mac; do ./slab "$m"; done')
+    print("     OR")
     print("  ./slab macros/energy_scan.mac")
-    print("\nNOTE: if you build out-of-source, re-run cmake (or copy the "
-          "regenerated macros) so the build dir picks up the new "
-          "energy_scan.mac.")
 
 
 if __name__ == "__main__":
