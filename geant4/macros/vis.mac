@@ -13,6 +13,14 @@
 /absorber/sizeXY 10 cm
 /absorber/numberOfLayers 10
 
+# --- Delta-ray production cut (AbsorberRegion) --------------------------
+# 1 mm in water ~ 350 keV electron threshold: sets the T_cut of the
+# RESTRICTED dE/dx reported by the continuous process (design, section 5).
+#/physics/absorberCut 1 mm
+# "Fine cut" alternative (~ tens of keV; nearly all deltas explicit; the
+# continuous dE/dx approaches the unrestricted one, slower):
+ /physics/absorberCut 0.01 mm
+
 /run/initialize
 
 # --- Scene and viewer ---------------------------------------------------
