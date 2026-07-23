@@ -58,8 +58,10 @@
 #include "TAxis.h"
 #include "TString.h"
 #include "TStyle.h"
+#include "TGaxis.h"
 #include "TMath.h"
 #include "TPad.h"
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -218,6 +220,42 @@ RunData LoadNtuple(const char* path)
   d.ok = !d.eInc.empty();
   return d;
 }
+// ============================================================================
+// Landau (x) Gaussian convolution ("langaus") — the standard straggling fit
+// shape in detector physics, from ROOT's official langaus.C example. The
+// Landau part carries the delta-ray tail (scale parameter Width = w), the
+// Gaussian part the accumulated many-collision smearing (GSigma), so the
+// convolution IS the practical stand-in for the Vavilov distribution at any
+// thickness regime — unlike the pure Gaussian (no tail) or pure Landau
+// (no finite variance), it closes at high statistics.
+// Parameters: [0] Width (Landau scale w), [1] MP (most probable value,
+// mode-shift corrected internally), [2] Area (normalization), [3] GSigma.
+// ============================================================================
+double langaufun(double* x, double* par)
+{
+  const double invsq2pi = 0.3989422804014;  // 1/sqrt(2 pi)
+  const double mpshift = -0.22278298;       // Landau location -> true mode
+  const int np = 100;                        // convolution steps
+  const double sc = 5.0;                     // integration range in GSigma
+
+  // Shift so that par[1] is the true most probable value of the Landau.
+  const double mpc = par[1] - mpshift * par[0];
+  const double xlow = x[0] - sc * par[3];
+  const double xupp = x[0] + sc * par[3];
+  const double step = (xupp - xlow) / np;
+
+  double sum = 0.;
+  for (int i = 1; i <= np / 2; ++i) {
+    double xx = xlow + (i - 0.5) * step;
+    sum += TMath::Landau(xx, mpc, par[0]) / par[0] *
+           TMath::Gaus(x[0], xx, par[3]);
+    xx = xupp - (i - 0.5) * step;
+    sum += TMath::Landau(xx, mpc, par[0]) / par[0] *
+           TMath::Gaus(x[0], xx, par[3]);
+  }
+  return par[2] * step * sum * invsq2pi / par[3];
+}
+
 // Mean and rms of a vector.
 void MeanRms(const std::vector<double>& v, double& mean, double& rms)
 {
@@ -328,69 +366,51 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   for (double x : edepTotal) h->Fill(x);
 
   // ---------------------------------------------------------------------
-  // Straggling-shape fits.
+  // Straggling-shape fit: Landau (x) Gaussian convolution ("langaus").
   // The energy-loss distribution in a slab interpolates between the two
   // classical limits of Landau-Vavilov theory, governed by the kappa
   // parameter (mean energy loss / Tmax): thin absorber (kappa << 1) ->
   // asymmetric Landau with a delta-ray tail; thick absorber (kappa >> 1)
-  // -> Gaussian (Bohr straggling). Fitting BOTH and comparing chi2/ndf
-  // shows which regime the run sits in. ROOT's built-in "landau" TF1 is
-  // the standard proxy for the Landau-Vavilov shape (exact Vavilov fitting
-  // is rarely warranted at this level).
+  // -> Gaussian (Bohr straggling). The langaus convolution covers the
+  // whole range: its Width (w) is the Landau SCALE parameter (sets the
+  // peak width, FWHM ~ 4.02 w for the pure-Landau part, and the weight of
+  // the high-side delta-ray tail; NOT a standard deviation — a pure Landau
+  // has no finite variance), and GSigma is the Gaussian smearing from the
+  // accumulated soft collisions. Pure-Gaussian and pure-Landau fits were
+  // dropped: at 100k events both were rejected (chi2/ndf ~ 121 and ~ 524)
+  // because neither shape is the true model and the statistical bin errors
+  // shrink as 1/sqrt(N), letting the systematic mismatch dominate.
   //
   // GOODNESS OF FIT: chi2 = sum over bins of (data_i - fit_i)^2 / sigma_i^2,
   // ndf = (fitted bins) - (free parameters). A model consistent with the
   // data at the level of its statistical fluctuations gives chi2/ndf ~ 1;
   // chi2/ndf >> 1 means the SHAPE is wrong (not just noisy), chi2/ndf << 1
-  // usually means overestimated bin errors. The quantitative comparison
-  // between the two models is their p-value, TMath::Prob(chi2, ndf) = the
-  // probability of getting a chi2 at least this large if the model were
-  // true; the fit with p closer to ~O(0.1-1) is the statistically
-  // preferred one, and p < ~1e-3 flags a shape genuinely rejected by data.
-  //
-  // LANDAU PARAMETERS: par[1] ("MPV") locates the peak and par[2] (w) is
-  // the SCALE parameter of the Landau density lambda = (x - MPV)/w — it
-  // sets the width of the peak (FWHM ~ 4.02 w for a pure Landau) and the
-  // weight of the high-side delta-ray tail. w is NOT a standard deviation
-  // (a pure Landau has no finite variance); comparing w to the Gaussian
-  // sigma is only qualitative. Caveat: in ROOT's parameterization the true
-  // mode sits ~0.22 w below par[1]; for precision MPV quoting use
-  // mpv_true = par[1] - 0.22278 * par[2].
-  //
-  // NOTE (observed, water 5 mm, 150 MeV, cut0p01mm, 1000 events): the
-  // deposit distribution comes out nearly symmetric and the Gaussian wins
-  // (chi2/ndf ~ 1.8 vs ~ 2.6 for the Landau, whose tail overshoots the
-  // data above ~3.2 MeV). This is the expected intermediate-to-thick
-  // Vavilov regime for these conditions: the slab integrates enough
-  // collisions for Bohr (Gaussian) straggling to dominate, while a thin
-  // absorber or higher energy would tilt the balance back toward Landau.
-  // Track how chi2/ndf of both fits evolves across the energy sweep.
+  // usually means overestimated bin errors. The quantitative criterion is
+  // the p-value, TMath::Prob(chi2, ndf): p in ~O(0.1-1) = compatible,
+  // p < ~1e-3 = shape genuinely rejected by the data.
   // ---------------------------------------------------------------------
-  TF1* fGaus = new TF1(Form("fGaus_%s", tag.Data()), "gaus", lo, hi);
-  fGaus->SetParameters(h->GetMaximum(), mean, rms);
-  h->Fit(fGaus, "Q0R");  // Q: quiet, 0: don't auto-draw, R: fit range
+  TF1* fLangaus = new TF1(Form("fLangaus_%s", tag.Data()), langaufun, lo, hi, 4);
+  fLangaus->SetParNames("Width", "MP", "Area", "GSigma");
+  // Seeds: narrow Landau + Gaussian smearing sharing the observed rms;
+  // Area = histogram integral x bin width (langaufun is density-normalized).
+  fLangaus->SetParameters(0.15 * rms, mean - 0.2 * rms,
+                          h->Integral() * h->GetBinWidth(1), 0.7 * rms);
+  fLangaus->SetParLimits(0, 1e-6, 5. * rms);   // Width > 0
+  fLangaus->SetParLimits(3, 1e-6, 5. * rms);   // GSigma > 0
+  h->Fit(fLangaus, "Q0R");  // Q: quiet, 0: don't auto-draw, R: fit range
 
-  TF1* fLandau = new TF1(Form("fLandau_%s", tag.Data()), "landau", lo, hi);
-  // Seeds: MPV slightly below the mean (Landau mean > MPV), width ~ rms/4.
-  fLandau->SetParameters(h->GetMaximum(), mean - 0.2 * rms, 0.25 * rms);
-  h->Fit(fLandau, "Q0R+");  // +: add to the fit list, keep the Gaussian
-
-  const double gausChi2 =
-      (fGaus->GetNDF() > 0) ? fGaus->GetChisquare() / fGaus->GetNDF() : 0.;
-  const double landauChi2 =
-      (fLandau->GetNDF() > 0) ? fLandau->GetChisquare() / fLandau->GetNDF() : 0.;
-  const double gausProb = TMath::Prob(fGaus->GetChisquare(), fGaus->GetNDF());
-  const double landauProb =
-      TMath::Prob(fLandau->GetChisquare(), fLandau->GetNDF());
-  printf("  Gaussian fit            : mean = %.4f +- %.4f MeV, "
-         "sigma = %.4f +- %.4f MeV, chi2/ndf = %.2f (p = %.3g)\n",
-         fGaus->GetParameter(1), fGaus->GetParError(1),
-         fGaus->GetParameter(2), fGaus->GetParError(2), gausChi2, gausProb);
-  printf("  Landau-Vavilov fit      : MPV  = %.4f +- %.4f MeV, "
-         "width = %.4f +- %.4f MeV, chi2/ndf = %.2f (p = %.3g)\n",
-         fLandau->GetParameter(1), fLandau->GetParError(1),
-         fLandau->GetParameter(2), fLandau->GetParError(2), landauChi2,
-         landauProb);
+  const double lgChi2 =
+      (fLangaus->GetNDF() > 0)
+          ? fLangaus->GetChisquare() / fLangaus->GetNDF()
+          : 0.;
+  const double lgProb =
+      TMath::Prob(fLangaus->GetChisquare(), fLangaus->GetNDF());
+  printf("  Langaus fit             : MP = %.4f +- %.4f MeV, "
+         "w = %.4f +- %.4f MeV, GSigma = %.4f +- %.4f MeV, "
+         "chi2/ndf = %.2f (p = %.3g)\n",
+         fLangaus->GetParameter(1), fLangaus->GetParError(1),
+         fLangaus->GetParameter(0), fLangaus->GetParError(0),
+         fLangaus->GetParameter(3), fLangaus->GetParError(3), lgChi2, lgProb);
 
   TCanvas* c = new TCanvas(Form("cEdep_%s", tag.Data()), "Energy deposit", 900, 650);
   h->SetLineColor(kAzure + 2);
@@ -401,59 +421,51 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   // data, the curves or the markers.
   h->SetMaximum(1.65 * h->GetMaximum());
   h->Draw("hist");
-  fGaus->SetLineColor(kOrange + 7);
-  fGaus->SetLineWidth(2);
-  fGaus->Draw("same");
-  fLandau->SetLineColor(kGreen + 2);
-  fLandau->SetLineWidth(2);
-  fLandau->SetLineStyle(2);
-  fLandau->Draw("same");
+  fLangaus->SetLineColor(kOrange + 7);
+  fLangaus->SetLineWidth(2);
+  fLangaus->SetNpx(400);  // smooth curve for the convolution
+  fLangaus->Draw("same");
 
   // --- Central-value markers with their errors as horizontal bars --------
-  // Sample mean (the estimator actually used for dE/dx), Gaussian mu and
-  // Landau MPV, each drawn at its curve/histogram height with the
-  // corresponding uncertainty as an x-error bar.
+  // Sample mean (the estimator actually used for dE/dx) and the langaus
+  // peak (maximum of the fitted convolution, with the MP fit error), each
+  // drawn at its curve/histogram height with its uncertainty as an x-error
+  // bar.
   const double meanErr = rms / TMath::Sqrt((double)edepTotal.size());
   TGraphErrors* gMeanPt = new TGraphErrors(1);
   gMeanPt->SetPoint(0, mean, h->GetBinContent(h->FindBin(mean)));
   gMeanPt->SetPointError(0, meanErr, 0.);
   gMeanPt->SetMarkerStyle(20);
-  gMeanPt->SetMarkerSize(1.3);
+  gMeanPt->SetMarkerSize(1.4);
   gMeanPt->SetMarkerColor(kAzure + 2);
   gMeanPt->SetLineColor(kAzure + 2);
   gMeanPt->SetLineWidth(2);
   gMeanPt->Draw("P same");
 
-  TGraphErrors* gGausPt = new TGraphErrors(1);
-  gGausPt->SetPoint(0, fGaus->GetParameter(1),
-                    fGaus->Eval(fGaus->GetParameter(1)));
-  gGausPt->SetPointError(0, fGaus->GetParError(1), 0.);
-  gGausPt->SetMarkerStyle(21);
-  gGausPt->SetMarkerSize(1.2);
-  gGausPt->SetMarkerColor(kOrange + 7);
-  gGausPt->SetLineColor(kOrange + 7);
-  gGausPt->SetLineWidth(2);
-  gGausPt->Draw("P same");
+  const double peakX = fLangaus->GetMaximumX(lo, hi);
+  TGraphErrors* gPeakPt = new TGraphErrors(1);
+  gPeakPt->SetPoint(0, peakX, fLangaus->Eval(peakX));
+  gPeakPt->SetPointError(0, fLangaus->GetParError(1), 0.);
+  gPeakPt->SetMarkerStyle(22);
+  gPeakPt->SetMarkerSize(1.5);
+  gPeakPt->SetMarkerColor(kOrange + 7);
+  gPeakPt->SetLineColor(kOrange + 7);
+  gPeakPt->SetLineWidth(2);
+  gPeakPt->Draw("P same");
 
-  TGraphErrors* gLandauPt = new TGraphErrors(1);
-  gLandauPt->SetPoint(0, fLandau->GetParameter(1),
-                      fLandau->Eval(fLandau->GetParameter(1)));
-  gLandauPt->SetPointError(0, fLandau->GetParError(1), 0.);
-  gLandauPt->SetMarkerStyle(22);
-  gLandauPt->SetMarkerSize(1.4);
-  gLandauPt->SetMarkerColor(kGreen + 2);
-  gLandauPt->SetLineColor(kGreen + 2);
-  gLandauPt->SetLineWidth(2);
-  gLandauPt->Draw("P same");
-
-  // --- Legend (top-left): curve identification + goodness of fit ---------
-  TLegend* legFit = new TLegend(0.12, 0.70, 0.52, 0.89);
+  // --- Legend (top-left): curves + langaus markers ------------------------
+  // "p" entries render the marker symbol of the object; the previous "pe"
+  // option suppressed the symbols in some ROOT versions, which is why the
+  // square/circle/triangle were missing from the label box.
+  TLegend* legFit = new TLegend(0.12, 0.68, 0.52, 0.89);
   legFit->SetBorderSize(0);
   legFit->SetFillStyle(0);
   legFit->SetTextSize(0.030);
   legFit->AddEntry(h, "Simulation", "l");
-  legFit->AddEntry(fGaus, Form("Gaussian  (#chi^{2}/ndf = %.1f)", gausChi2), "l");
-  legFit->AddEntry(fLandau, Form("Landau  (#chi^{2}/ndf = %.1f)", landauChi2), "l");
+  legFit->AddEntry(fLangaus,
+                   Form("Langaus fit  (#chi^{2}/ndf = %.1f)", lgChi2), "l");
+  legFit->AddEntry(gMeanPt, "sample mean", "p");
+  legFit->AddEntry(gPeakPt, "langaus peak (MPV)", "p");
   legFit->Draw();
 
   // --- Parameter box (top-right): one line per parameter -----------------
@@ -462,15 +474,16 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   pav->SetFillStyle(0);
   pav->SetTextAlign(12);  // left-adjusted
   pav->SetTextSize(0.028);
-  pav->AddText(Form("mean = %.3f #pm %.3f MeV", mean, meanErr));
-  pav->AddText(Form("#mu_{Gaus} = %.3f #pm %.3f MeV",
-                    fGaus->GetParameter(1), fGaus->GetParError(1)));
-  pav->AddText(Form("#sigma_{Gaus} = %.3f #pm %.3f MeV",
-                    fGaus->GetParameter(2), fGaus->GetParError(2)));
-  pav->AddText(Form("MPV_{Landau} = %.3f #pm %.3f MeV",
-                    fLandau->GetParameter(1), fLandau->GetParError(1)));
-  pav->AddText(Form("w_{Landau} = %.3f #pm %.3f MeV",
-                    fLandau->GetParameter(2), fLandau->GetParError(2)));
+  // 4 decimals on the uncertainties: with 100k events the fit errors drop
+  // below 0.001 MeV and 3 decimals would print a misleading "0.000".
+  pav->AddText(Form("mean = %.4f #pm %.4f MeV", mean, meanErr));
+  pav->AddText(Form("MP_{langaus} = %.4f #pm %.4f MeV",
+                    fLangaus->GetParameter(1), fLangaus->GetParError(1)));
+  pav->AddText(Form("w_{Landau} = %.4f #pm %.4f MeV",
+                    fLangaus->GetParameter(0), fLangaus->GetParError(0)));
+  pav->AddText(Form("#sigma_{Gaus} = %.4f #pm %.4f MeV",
+                    fLangaus->GetParameter(3), fLangaus->GetParError(3)));
+  pav->AddText(Form("p-value = %.3g", lgProb));
   pav->Draw();
 
   // 'p'-encoded tag in the output name too, for consistent sorting/globbing.
@@ -575,11 +588,22 @@ void AnalyzeScan(const char* dataDir = ".")
       "E_{dep}/#LTE_{dep}#GT;events",
       (int)present.size(), 0., (double)present.size(),
       cfg::kStragNBinsY, cfg::kStragYMin, cfg::kStragYMax);
-  for (size_t i = 0; i < present.size(); ++i)
-    hStrag->GetXaxis()->SetBinLabel((int)i + 1,
-                                    Form("%g", present[i]));
-  hStrag->GetXaxis()->LabelsOption("v");  // vertical labels: no overlap
-  hStrag->GetXaxis()->SetLabelSize(present.size() > 40 ? 0.018 : 0.03);
+  // Label only 4 representative energies (log-spaced across the sweep):
+  // 100+ per-bin labels smear into an unreadable band. Every bin keeps its
+  // data — unlabeled bins simply get an empty label string.
+  {
+    for (size_t i = 0; i < present.size(); ++i)
+      hStrag->GetXaxis()->SetBinLabel((int)i + 1, "");
+    const int nLab = 4;
+    const int nPts = (int)present.size();
+    for (int k = 0; k < nLab; ++k) {
+      int idx = (nLab > 1)
+                    ? (int)std::lround(k * (nPts - 1) / (double)(nLab - 1))
+                    : 0;
+      hStrag->GetXaxis()->SetBinLabel(idx + 1, Form("%g", present[idx]));
+    }
+    hStrag->GetXaxis()->SetLabelSize(0.045);
+  }
 
   std::vector<RunResult> results;
   int ix = 0;
@@ -704,19 +728,30 @@ void AnalyzeScan(const char* dataDir = ".")
   c->SaveAs("dedx_vs_energy.pdf");
 
   // --- 3D straggling surface ------------------------------------------------
-  // Extra right/top margins so the z axis and the vertical x labels of the
-  // LEGO view fit inside the canvas without clipping.
-  TCanvas* cs = new TCanvas("cStrag", "Straggling surface", 1000, 750);
-  cs->SetRightMargin(0.12);
+  // Generous margins so the palette, the z-axis title and the axis labels
+  // of the LEGO view all fit inside the canvas without clipping or
+  // overlapping each other.
+  // Up to 6 full digits on axes before switching to scientific notation:
+  // suppresses the "x10^3" exponent block that was drawn on top of the
+  // event-count scale in both straggling views.
+  TGaxis::SetMaxDigits(6);
+  TCanvas* cs = new TCanvas("cStrag", "Straggling surface", 1100, 800);
+  cs->SetRightMargin(0.18);   // room for the color palette + "events" title
+  cs->SetLeftMargin(0.12);
+  cs->SetBottomMargin(0.14);  // room for the x-axis title below the labels
   cs->SetTopMargin(0.08);
-  hStrag->SetTitleOffset(1.9, "x");
-  hStrag->SetTitleOffset(2.1, "y");
+  hStrag->SetTitleOffset(2.2, "x");
+  hStrag->SetTitleOffset(2.0, "y");
+  hStrag->SetTitleOffset(1.3, "z");
   hStrag->Draw("LEGO2 Z");
   cs->SaveAs("straggling_3d.png");
   // Companion 2D color map: same information, easier to read the width
   // evolution quantitatively than the LEGO view.
   TCanvas* cm = new TCanvas("cStragMap", "Straggling map", 1000, 650);
-  cm->SetRightMargin(0.14);
+  cm->SetRightMargin(0.15);   // palette
+  cm->SetBottomMargin(0.14);  // x-axis title was clipped with the default
+  hStrag->GetXaxis()->SetTitleOffset(1.2);
+  hStrag->GetYaxis()->SetTitleOffset(1.1);
   hStrag->Draw("COLZ");
   cm->SaveAs("straggling_map.png");
 
