@@ -1,0 +1,8 @@
+# ============================================================================
+# run_point.mac — DEPRECATED stub, kept only so CMake's configure_file()
+# rule for this path keeps working. The sweep uses inlined points in
+# energy_scan.mac (numeric energy + 'p'-encoded file tag + per-point
+# thin-slab thickness cannot ride on a single /control/foreach alias).
+# Safe to delete once the CMakeLists.txt entry for macros/run_point.mac is
+# removed.
+# ============================================================================
