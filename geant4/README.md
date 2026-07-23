@@ -2,7 +2,7 @@
 
 Geant4 (11.x) application that simulates monoenergetic protons crossing a
 homogeneous absorber slab, to compare the simulated stopping power against
-the analytical Bethe-Bloch equation (Phase 5 of the project). Skeleton based
+the analytical Bethe-Bloch equation. Skeleton based
 on the `TestEm0` style.
 
 ## Build
