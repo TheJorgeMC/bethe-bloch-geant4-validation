@@ -6,11 +6,14 @@
 // depth-dose histogram) and produces:
 //
 //   1) Per-run statistics: mean/rms energy deposit (straggling), restricted
-//      and total dE/dx estimators, per-event energy-balance residual.
+//      and total dE/dx estimators, per-event energy-balance residual, and
+//      Gaussian + Landau fits of the deposit distribution.
 //   2) The dE/dx vs energy curve of the full sweep, compared against the
 //      PURE RELATIVISTIC BETHE formula (NO corrections) evaluated in this
 //      macro — see the note below.
 //   3) The Bragg / depth-dose curve from the DepthEdep histogram.
+//   4) A 3D straggling surface: the per-event deposit distribution
+//      (normalized to its per-run mean) for every energy of the sweep.
 //
 // ANALYTIC REFERENCE (consistent with analytic_solution.ipynb and the
 // "Relativistic Bethe" section of Bethe_Full_Derivation.pdf):
@@ -47,8 +50,10 @@
 #include "TGraphErrors.h"
 #include "TGraph.h"
 #include "TH1D.h"
+#include "TH2D.h"
 #include "TF1.h"
 #include "TLegend.h"
+#include "TPaveText.h"
 #include "TLatex.h"
 #include "TAxis.h"
 #include "TString.h"
@@ -138,6 +143,14 @@ const double kMp = 938.27208943;    // proton rest mass energy, MeV
 const double kMe = 0.51099895069;   // electron rest mass energy, MeV
 const double kK = 0.307075;         // 4 pi N_A r_e^2 m_e c^2, MeV cm2 / mol
 const double kEvToMeV = 1e-6;       // eV -> MeV
+// --- Straggling surface (AnalyzeScan) ---------------------------------------
+// The deposit of each event is normalized to its run's mean, so runs whose
+// absolute deposits differ by orders of magnitude across the sweep share
+// one common, comparable y axis. 1.0 = the mean; the shape around it IS
+// the straggling distribution.
+const int kStragNBinsY = 60;
+const double kStragYMin = 0.4;   // Edep / <Edep>
+const double kStragYMax = 1.8;
 }  // namespace cfg
 // ============================================================================
 // Analytical stopping power: pure relativistic Bethe, NO corrections
@@ -164,7 +177,6 @@ double BetheNoCorr_Mass_MeVcm2_g(double Ekin_MeV)
   // z = 1 for protons.
   return cfg::kK * cfg::kZoverA / beta2 * bracket;
 }
-
 // Linear stopping power, MeV/cm — the notebook's linear_stopping_power():
 // -dE/dx = S(T) * rho.
 double BetheNoCorr_Linear_MeV_cm(double Ekin_MeV)
@@ -323,8 +335,36 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   // asymmetric Landau with a delta-ray tail; thick absorber (kappa >> 1)
   // -> Gaussian (Bohr straggling). Fitting BOTH and comparing chi2/ndf
   // shows which regime the run sits in. ROOT's built-in "landau" TF1 is
-  // the standard proxy for the Landau-Vavilov shape (MPV and width scale
-  // parameter; exact Vavilov fitting is rarely warranted at this level).
+  // the standard proxy for the Landau-Vavilov shape (exact Vavilov fitting
+  // is rarely warranted at this level).
+  //
+  // GOODNESS OF FIT: chi2 = sum over bins of (data_i - fit_i)^2 / sigma_i^2,
+  // ndf = (fitted bins) - (free parameters). A model consistent with the
+  // data at the level of its statistical fluctuations gives chi2/ndf ~ 1;
+  // chi2/ndf >> 1 means the SHAPE is wrong (not just noisy), chi2/ndf << 1
+  // usually means overestimated bin errors. The quantitative comparison
+  // between the two models is their p-value, TMath::Prob(chi2, ndf) = the
+  // probability of getting a chi2 at least this large if the model were
+  // true; the fit with p closer to ~O(0.1-1) is the statistically
+  // preferred one, and p < ~1e-3 flags a shape genuinely rejected by data.
+  //
+  // LANDAU PARAMETERS: par[1] ("MPV") locates the peak and par[2] (w) is
+  // the SCALE parameter of the Landau density lambda = (x - MPV)/w — it
+  // sets the width of the peak (FWHM ~ 4.02 w for a pure Landau) and the
+  // weight of the high-side delta-ray tail. w is NOT a standard deviation
+  // (a pure Landau has no finite variance); comparing w to the Gaussian
+  // sigma is only qualitative. Caveat: in ROOT's parameterization the true
+  // mode sits ~0.22 w below par[1]; for precision MPV quoting use
+  // mpv_true = par[1] - 0.22278 * par[2].
+  //
+  // NOTE (observed, water 5 mm, 150 MeV, cut0p01mm, 1000 events): the
+  // deposit distribution comes out nearly symmetric and the Gaussian wins
+  // (chi2/ndf ~ 1.8 vs ~ 2.6 for the Landau, whose tail overshoots the
+  // data above ~3.2 MeV). This is the expected intermediate-to-thick
+  // Vavilov regime for these conditions: the slab integrates enough
+  // collisions for Bohr (Gaussian) straggling to dominate, while a thin
+  // absorber or higher energy would tilt the balance back toward Landau.
+  // Track how chi2/ndf of both fits evolves across the energy sweep.
   // ---------------------------------------------------------------------
   TF1* fGaus = new TF1(Form("fGaus_%s", tag.Data()), "gaus", lo, hi);
   fGaus->SetParameters(h->GetMaximum(), mean, rms);
@@ -339,19 +379,27 @@ void AnalyzeRun(const char* csvFile, double Enominal)
       (fGaus->GetNDF() > 0) ? fGaus->GetChisquare() / fGaus->GetNDF() : 0.;
   const double landauChi2 =
       (fLandau->GetNDF() > 0) ? fLandau->GetChisquare() / fLandau->GetNDF() : 0.;
+  const double gausProb = TMath::Prob(fGaus->GetChisquare(), fGaus->GetNDF());
+  const double landauProb =
+      TMath::Prob(fLandau->GetChisquare(), fLandau->GetNDF());
   printf("  Gaussian fit            : mean = %.4f +- %.4f MeV, "
-         "sigma = %.4f +- %.4f MeV, chi2/ndf = %.2f\n",
+         "sigma = %.4f +- %.4f MeV, chi2/ndf = %.2f (p = %.3g)\n",
          fGaus->GetParameter(1), fGaus->GetParError(1),
-         fGaus->GetParameter(2), fGaus->GetParError(2), gausChi2);
+         fGaus->GetParameter(2), fGaus->GetParError(2), gausChi2, gausProb);
   printf("  Landau-Vavilov fit      : MPV  = %.4f +- %.4f MeV, "
-         "width = %.4f +- %.4f MeV, chi2/ndf = %.2f\n",
+         "width = %.4f +- %.4f MeV, chi2/ndf = %.2f (p = %.3g)\n",
          fLandau->GetParameter(1), fLandau->GetParError(1),
-         fLandau->GetParameter(2), fLandau->GetParError(2), landauChi2);
+         fLandau->GetParameter(2), fLandau->GetParError(2), landauChi2,
+         landauProb);
 
-  TCanvas* c = new TCanvas(Form("cEdep_%s", tag.Data()), "Energy deposit", 800, 600);
+  TCanvas* c = new TCanvas(Form("cEdep_%s", tag.Data()), "Energy deposit", 900, 650);
   h->SetLineColor(kAzure + 2);
   h->SetLineWidth(2);
   h->SetStats(false);
+  // Headroom above the peak: the top band of the pad is reserved for the
+  // legend (left) and the parameter box (right), so nothing overlaps the
+  // data, the curves or the markers.
+  h->SetMaximum(1.65 * h->GetMaximum());
   h->Draw("hist");
   fGaus->SetLineColor(kOrange + 7);
   fGaus->SetLineWidth(2);
@@ -361,20 +409,69 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   fLandau->SetLineStyle(2);
   fLandau->Draw("same");
 
-  TLegend* legFit = new TLegend(0.14, 0.62, 0.52, 0.88);
+  // --- Central-value markers with their errors as horizontal bars --------
+  // Sample mean (the estimator actually used for dE/dx), Gaussian mu and
+  // Landau MPV, each drawn at its curve/histogram height with the
+  // corresponding uncertainty as an x-error bar.
+  const double meanErr = rms / TMath::Sqrt((double)edepTotal.size());
+  TGraphErrors* gMeanPt = new TGraphErrors(1);
+  gMeanPt->SetPoint(0, mean, h->GetBinContent(h->FindBin(mean)));
+  gMeanPt->SetPointError(0, meanErr, 0.);
+  gMeanPt->SetMarkerStyle(20);
+  gMeanPt->SetMarkerSize(1.3);
+  gMeanPt->SetMarkerColor(kAzure + 2);
+  gMeanPt->SetLineColor(kAzure + 2);
+  gMeanPt->SetLineWidth(2);
+  gMeanPt->Draw("P same");
+
+  TGraphErrors* gGausPt = new TGraphErrors(1);
+  gGausPt->SetPoint(0, fGaus->GetParameter(1),
+                    fGaus->Eval(fGaus->GetParameter(1)));
+  gGausPt->SetPointError(0, fGaus->GetParError(1), 0.);
+  gGausPt->SetMarkerStyle(21);
+  gGausPt->SetMarkerSize(1.2);
+  gGausPt->SetMarkerColor(kOrange + 7);
+  gGausPt->SetLineColor(kOrange + 7);
+  gGausPt->SetLineWidth(2);
+  gGausPt->Draw("P same");
+
+  TGraphErrors* gLandauPt = new TGraphErrors(1);
+  gLandauPt->SetPoint(0, fLandau->GetParameter(1),
+                      fLandau->Eval(fLandau->GetParameter(1)));
+  gLandauPt->SetPointError(0, fLandau->GetParError(1), 0.);
+  gLandauPt->SetMarkerStyle(22);
+  gLandauPt->SetMarkerSize(1.4);
+  gLandauPt->SetMarkerColor(kGreen + 2);
+  gLandauPt->SetLineColor(kGreen + 2);
+  gLandauPt->SetLineWidth(2);
+  gLandauPt->Draw("P same");
+
+  // --- Legend (top-left): curve identification + goodness of fit ---------
+  TLegend* legFit = new TLegend(0.12, 0.70, 0.52, 0.89);
   legFit->SetBorderSize(0);
   legFit->SetFillStyle(0);
+  legFit->SetTextSize(0.030);
   legFit->AddEntry(h, "Simulation", "l");
-  legFit->AddEntry(fGaus,
-                   Form("Gaussian: #mu=%.3f, #sigma=%.3f (#chi^{2}/ndf=%.1f)",
-                        fGaus->GetParameter(1), fGaus->GetParameter(2), gausChi2),
-                   "l");
-  legFit->AddEntry(fLandau,
-                   Form("Landau: MPV=%.3f, w=%.3f (#chi^{2}/ndf=%.1f)",
-                        fLandau->GetParameter(1), fLandau->GetParameter(2),
-                        landauChi2),
-                   "l");
+  legFit->AddEntry(fGaus, Form("Gaussian  (#chi^{2}/ndf = %.1f)", gausChi2), "l");
+  legFit->AddEntry(fLandau, Form("Landau  (#chi^{2}/ndf = %.1f)", landauChi2), "l");
   legFit->Draw();
+
+  // --- Parameter box (top-right): one line per parameter -----------------
+  TPaveText* pav = new TPaveText(0.55, 0.62, 0.89, 0.89, "NDC");
+  pav->SetBorderSize(0);
+  pav->SetFillStyle(0);
+  pav->SetTextAlign(12);  // left-adjusted
+  pav->SetTextSize(0.028);
+  pav->AddText(Form("mean = %.3f #pm %.3f MeV", mean, meanErr));
+  pav->AddText(Form("#mu_{Gaus} = %.3f #pm %.3f MeV",
+                    fGaus->GetParameter(1), fGaus->GetParError(1)));
+  pav->AddText(Form("#sigma_{Gaus} = %.3f #pm %.3f MeV",
+                    fGaus->GetParameter(2), fGaus->GetParError(2)));
+  pav->AddText(Form("MPV_{Landau} = %.3f #pm %.3f MeV",
+                    fLandau->GetParameter(1), fLandau->GetParError(1)));
+  pav->AddText(Form("w_{Landau} = %.3f #pm %.3f MeV",
+                    fLandau->GetParameter(2), fLandau->GetParError(2)));
+  pav->Draw();
 
   // 'p'-encoded tag in the output name too, for consistent sorting/globbing.
   c->SaveAs(Form("edep_distribution_%sMeV.png", tag.Data()));
@@ -440,7 +537,8 @@ void PlotBragg(const char* h1File)
          nbins, zmin, zmax);
 }
 // ============================================================================
-// Full sweep: dE/dx vs E against the uncorrected relativistic Bethe curve
+// Full sweep: dE/dx vs E against the uncorrected relativistic Bethe curve,
+// plus the 3D straggling surface across the sweep
 // ============================================================================
 void AnalyzeScan(const char* dataDir = ".")
 {
@@ -450,26 +548,67 @@ void AnalyzeScan(const char* dataDir = ".")
            "(read relative to the current directory)\n");
     return;
   }
-  std::vector<RunResult> results;
+  // --- Pre-scan: which sweep points actually have data files? -------------
+  // Needed to give the straggling TH2 one x bin per available energy.
+  std::vector<double> present;
   for (double E : cfg::kEnergiesMeV) {
     if (E < cfg::kEMinMeV) continue;
-    // 'p'-encoded energy tag in the file name (0.001 -> 0p001), matching
-    // etag() in generate_energy_scan.py.
+    TString f = TString::Format(cfg::kNtupleFilePattern, dataDir,
+                                EnergyTag(E).Data(), cfg::kCutTag);
+    std::ifstream test(f.Data());
+    if (test) present.push_back(E);
+  }
+  if (present.empty()) {
+    printf("No data files found in '%s' — check cfg::kNtupleFilePattern and "
+           "cfg::kCutTag ('%s')\n", dataDir, cfg::kCutTag);
+    return;
+  }
+
+  // --- Straggling surface: one x bin per sweep energy, y = Edep/<Edep> ----
+  // Normalizing each event's deposit to its run's mean makes runs whose
+  // absolute deposits differ by orders of magnitude share one comparable
+  // axis: the spread/asymmetry around 1.0 IS the straggling shape, and its
+  // evolution along x shows the Vavilov thick->thin transition directly.
+  TH2D* hStrag = new TH2D(
+      "hStrag",
+      "Straggling across the energy sweep;beam energy (MeV);"
+      "E_{dep}/#LTE_{dep}#GT;events",
+      (int)present.size(), 0., (double)present.size(),
+      cfg::kStragNBinsY, cfg::kStragYMin, cfg::kStragYMax);
+  for (size_t i = 0; i < present.size(); ++i)
+    hStrag->GetXaxis()->SetBinLabel((int)i + 1,
+                                    Form("%g", present[i]));
+  hStrag->GetXaxis()->LabelsOption("v");  // vertical labels: no overlap
+  hStrag->GetXaxis()->SetLabelSize(present.size() > 40 ? 0.018 : 0.03);
+
+  std::vector<RunResult> results;
+  int ix = 0;
+  for (double E : present) {
     TString f = TString::Format(cfg::kNtupleFilePattern, dataDir,
                                 EnergyTag(E).Data(), cfg::kCutTag);
     RunData d = LoadNtuple(f.Data());
     RunResult r = AnalyzeRunData(d, E);
-    if (r.ok) {
-      results.push_back(r);
-      printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
-             "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f MeV/cm\n",
-             E, r.n, r.dedxRestricted, r.dedxTotal,
-             BetheNoCorr_Linear_MeV_cm(E));
+    ++ix;
+    if (!r.ok) continue;
+    results.push_back(r);
+    printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
+           "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f MeV/cm\n",
+           E, r.n, r.dedxRestricted, r.dedxTotal,
+           BetheNoCorr_Linear_MeV_cm(E));
+    // Fill the straggling slice for this energy.
+    double meanEdep = 0., rmsEdep = 0.;
+    std::vector<double> edepTotal;
+    edepTotal.reserve(d.eInc.size());
+    for (size_t i = 0; i < d.eInc.size(); ++i)
+      edepTotal.push_back(d.edepPrim[i] + d.edepSec[i]);
+    MeanRms(edepTotal, meanEdep, rmsEdep);
+    if (meanEdep > 0.) {
+      for (double e : edepTotal)
+        hStrag->Fill(ix - 0.5, e / meanEdep);
     }
   }
   if (results.empty()) {
-    printf("No data files found in '%s' — check cfg::kNtupleFilePattern and "
-           "cfg::kCutTag ('%s')\n", dataDir, cfg::kCutTag);
+    printf("No readable data — nothing to analyze\n");
     return;
   }
   // --- Graphs ---------------------------------------------------------------
@@ -531,8 +670,12 @@ void AnalyzeScan(const char* dataDir = ".")
   gRestr->SetMarkerColor(kOrange + 7);
   gRestr->SetLineColor(kOrange + 7);
   gRestr->Draw("P same");
-  TLegend* leg = new TLegend(0.42, 0.65, 0.88, 0.88);
+  // Bottom-left corner: empty for a monotonically decreasing curve on
+  // log-log axes, so the legend never covers data points.
+  TLegend* leg = new TLegend(0.14, 0.06, 0.60, 0.28);
   leg->SetBorderSize(0);
+  leg->SetFillStyle(0);
+  leg->SetTextSize(0.032);
   leg->AddEntry(gBB, "Relativistic Bethe (no corrections)", "l");
   leg->AddEntry(gTotal, "Simulation: (E_{in}-E_{out})/track  (~unrestricted)", "p");
   leg->AddEntry(gRestr, "Simulation: E_{dep,primary}/track  (restricted)", "p");
@@ -559,6 +702,24 @@ void AnalyzeScan(const char* dataDir = ".")
   gUnity->Draw("L same");
   c->SaveAs("dedx_vs_energy.png");
   c->SaveAs("dedx_vs_energy.pdf");
+
+  // --- 3D straggling surface ------------------------------------------------
+  // Extra right/top margins so the z axis and the vertical x labels of the
+  // LEGO view fit inside the canvas without clipping.
+  TCanvas* cs = new TCanvas("cStrag", "Straggling surface", 1000, 750);
+  cs->SetRightMargin(0.12);
+  cs->SetTopMargin(0.08);
+  hStrag->SetTitleOffset(1.9, "x");
+  hStrag->SetTitleOffset(2.1, "y");
+  hStrag->Draw("LEGO2 Z");
+  cs->SaveAs("straggling_3d.png");
+  // Companion 2D color map: same information, easier to read the width
+  // evolution quantitatively than the LEGO view.
+  TCanvas* cm = new TCanvas("cStragMap", "Straggling map", 1000, 650);
+  cm->SetRightMargin(0.14);
+  hStrag->Draw("COLZ");
+  cm->SaveAs("straggling_map.png");
+
   // --- Summary CSV for further processing -----------------------------------
   // Linear stopping power in MeV/cm; mass stopping power S in MeV cm2/g
   // (S = linear / density).
@@ -580,7 +741,8 @@ void AnalyzeScan(const char* dataDir = ".")
         << r.stragglingRms << ',' << r.balanceResidual << '\n';
   }
   out.close();
-  printf("\nWritten: dedx_vs_energy.png/.pdf and dedx_summary.csv "
+  printf("\nWritten: dedx_vs_energy.png/.pdf, straggling_3d.png, "
+         "straggling_map.png and dedx_summary.csv "
          "(%d of %zu grid points had data)\n",
          n, cfg::kEnergiesMeV.size());
 }
