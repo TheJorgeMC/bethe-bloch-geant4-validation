@@ -49,7 +49,6 @@ set(SLAB_MACROS
         macros/vis.mac
         macros/energy_scan.mac
         macros/run_point.mac
-        macros/generate_energy_scan.py
         ${SCAN_MACROS}
 )
 
