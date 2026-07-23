@@ -125,10 +125,19 @@ const char* kCutTag = "cut0p01mm";
 // Ntuple file pattern: dedx_<Etag>MeV_<cutTag>_nt_slab.csv
 // (%s placeholders: dataDir, EnergyTag(E), kCutTag)
 const char* kNtupleFilePattern = "%s/dedx_%sMeV_%s_nt_slab.csv";
-// Slab thickness in mm (must match /absorber/thickness in the macros).
-// Only used for reference printing; the dE/dx estimators divide by the
-// actual per-event track length from the ntuple, which is more accurate.
-const double kThicknessMM = 5.0;
+// SLAB THICKNESS IS NO LONGER A SINGLE NUMBER: the generator applies the
+// thin-slab rule t(E) = clamp(5% x range(E), 1 um, 5 mm), with the range
+// from the Bragg-Kleeman rule R = alpha x E^p for protons in water
+// (alpha = 0.002777 cm/MeV^p, p = 1.723, CSDA approximation,
+// doi:10.48550/arXiv.2011.00285), so that the fractional energy loss stays
+// small at EVERY sweep energy and the total estimator (E_in - E_out)/track
+// is defined across the whole validation band (with a fixed 5 mm the
+// measurement silently changed nature along the sweep: thin-slab dE/dx
+// above ~100 MeV, full-stopping below ~20.5 MeV — a systematic gap, not
+// comparable point by point against theory or PSTAR). The analysis needs
+// no thickness input at all: every estimator divides by the per-event
+// track length from the ntuple.
+const double kThicknessMaxMM = 5.0;  // informational (upper clamp)
 // --- Absorber material constants: liquid water -----------------------------
 // Kept numerically identical to the WATER Material in analytic_solution.ipynb.
 // Z/A by the Bragg additivity rule (ICRU 37/49, Sec. 2.5.2 Eq. 2.22) with
@@ -150,9 +159,12 @@ const double kEvToMeV = 1e-6;       // eV -> MeV
 // absolute deposits differ by orders of magnitude across the sweep share
 // one common, comparable y axis. 1.0 = the mean; the shape around it IS
 // the straggling distribution.
-const int kStragNBinsY = 60;
-const double kStragYMin = 0.4;   // Edep / <Edep>
-const double kStragYMax = 1.8;
+// Wider y range than before: with thin slabs the high-energy runs sit deep
+// in the Landau regime, whose mean-normalized delta-ray tail extends well
+// above the old 1.8 limit.
+const int kStragNBinsY = 80;
+const double kStragYMin = 0.2;   // Edep / <Edep>
+const double kStragYMax = 3.0;
 }  // namespace cfg
 // ============================================================================
 // Analytical stopping power: pure relativistic Bethe, NO corrections
@@ -271,15 +283,32 @@ void MeanRms(const std::vector<double>& v, double& mean, double& rms)
 // ============================================================================
 // Per-run analysis: statistics, dE/dx estimators, energy balance
 // ============================================================================
+// ----------------------------------------------------------------------------
+// ESTIMATOR DEFINITIONS (linear stopping power, MeV/cm; ntuple lengths are
+// in mm, converted in AnalyzeRunData; mass form = linear / density):
+//
+//  RESTRICTED  = <Edep_primary / track_length>. The primary's continuous
+//    energy loss per path: excludes the energy carried away by delta rays
+//    generated above the production cut. This is the Geant4 restricted
+//    dE/dx with T_cut set by /physics/absorberCut — it DEPENDS on the cut
+//    and is NOT the quantity the Bethe formula predicts.
+//
+//  TOTAL (~unrestricted) = <(E_inc - E_exit) / track_length>. ALL the
+//    energy the primary lost per unit path, wherever it ended up
+//    (local deposit + deltas + escaping radiation). This is the quantity
+//    comparable with the unrestricted Bethe formula and with NIST PSTAR.
+//    It requires the primary to EXIT the slab, which the thin-slab
+//    thickness rule t(E) ~ 5% x range(E) guarantees at every sweep
+//    energy; n_exit == 0 in a run now signals a broken thickness choice
+//    (or E below ~0.3 MeV, where even the 1 um floor exceeds the range)
+//    and is flagged, not silently zeroed.
+// ----------------------------------------------------------------------------
 struct RunResult
 {
   double E = 0.;                    // nominal beam energy (MeV)
-  // Linear stopping power estimators in MeV/cm (ntuple lengths are in mm;
-  // the mm -> cm conversion is applied in AnalyzeRunData). Mass stopping
-  // power (MeV cm2/g) = linear / density.
-  double dedxRestricted = 0.;       // <Edep_primary / track_length>  (MeV/cm)
+  double dedxRestricted = 0.;       // restricted estimator (MeV/cm)
   double dedxRestrictedErr = 0.;
-  double dedxTotal = 0.;            // <(E_inc - E_exit) / track_length> (MeV/cm)
+  double dedxTotal = 0.;            // total (~unrestricted) estimator (MeV/cm)
   double dedxTotalErr = 0.;
   long nExit = 0;                   // events where the primary exited the slab
   double stragglingRms = 0.;        // rms of the total energy deposit
@@ -615,10 +644,20 @@ void AnalyzeScan(const char* dataDir = ".")
     ++ix;
     if (!r.ok) continue;
     results.push_back(r);
-    printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
-           "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f MeV/cm\n",
-           E, r.n, r.dedxRestricted, r.dedxTotal,
-           BetheNoCorr_Linear_MeV_cm(E));
+    if (r.nExit > 0) {
+      printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
+             "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f MeV/cm\n",
+             E, r.n, r.dedxRestricted, r.dedxTotal,
+             BetheNoCorr_Linear_MeV_cm(E));
+    } else {
+      // No exiting primaries: with the thin-slab rule this should NOT
+      // happen in the validation band — flag the run for re-simulation.
+      printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
+             "dE/dx(total) =        n/a  Bethe(no corr) = %10.4f MeV/cm"
+             "  [WARNING: no exiting primaries — thickness incompatible "
+             "with this energy, re-simulate this point]\n",
+             E, r.n, r.dedxRestricted, BetheNoCorr_Linear_MeV_cm(E));
+    }
     // Fill the straggling slice for this energy.
     double meanEdep = 0., rmsEdep = 0.;
     std::vector<double> edepTotal;
@@ -647,9 +686,9 @@ void AnalyzeScan(const char* dataDir = ".")
     gRestr->SetPointError(i, 0., r.dedxRestrictedErr);
     gTotal->SetPoint(i, r.E, r.dedxTotal);
     gTotal->SetPointError(i, 0., r.dedxTotalErr);
-    // Ratio only where the total estimator exists (primaries that exit the
-    // slab): below ~20 MeV the proton stops inside 5 mm of water and
-    // (E_in - E_out) is undefined.
+    // With the thin-slab thickness rule the total estimator exists at every
+    // sweep energy; nExit == 0 here is a data-quality flag (wrong thickness
+    // for that run, or E below the ~0.3 MeV floor), not an expected gap.
     if (r.nExit > 0) {
       const double bb = BetheNoCorr_Linear_MeV_cm(r.E);
       gRatio->SetPoint(nRatio, r.E, r.dedxTotal / bb);
@@ -694,12 +733,13 @@ void AnalyzeScan(const char* dataDir = ".")
   gRestr->SetMarkerColor(kOrange + 7);
   gRestr->SetLineColor(kOrange + 7);
   gRestr->Draw("P same");
-  // Bottom-left corner: empty for a monotonically decreasing curve on
-  // log-log axes, so the legend never covers data points.
-  TLegend* leg = new TLegend(0.14, 0.06, 0.60, 0.28);
+  // Top-right corner: above and to the right of a monotonically decreasing
+  // curve on log-log axes there is no data, so the legend cannot overlap
+  // points or the curve.
+  TLegend* leg = new TLegend(0.47, 0.70, 0.89, 0.89);
   leg->SetBorderSize(0);
   leg->SetFillStyle(0);
-  leg->SetTextSize(0.032);
+  leg->SetTextSize(0.030);
   leg->AddEntry(gBB, "Relativistic Bethe (no corrections)", "l");
   leg->AddEntry(gTotal, "Simulation: (E_{in}-E_{out})/track  (~unrestricted)", "p");
   leg->AddEntry(gRestr, "Simulation: E_{dep,primary}/track  (restricted)", "p");
@@ -758,22 +798,48 @@ void AnalyzeScan(const char* dataDir = ".")
   // --- Summary CSV for further processing -----------------------------------
   // Linear stopping power in MeV/cm; mass stopping power S in MeV cm2/g
   // (S = linear / density).
+  //
+  // TOTAL-ESTIMATOR COLUMNS: with the thin-slab thickness rule
+  // (t(E) ~ 5% x range(E), applied by generate_energy_scan.py) the total
+  // estimator is defined at every sweep energy, so these columns should be
+  // complete across the validation band. An empty entry (n_exit == 0) is a
+  // DATA-QUALITY FLAG — the run was produced with a thickness incompatible
+  // with its energy (e.g. old fixed-5mm data below ~20.5 MeV, or E below
+  // the ~0.3 MeV floor where even 1 um exceeds the range) — and such runs
+  // must be re-simulated, not compared. Empty fields read as NaN in pandas.
+  //
+  // rel_err_bethe_vs_total_pct = 100 * (S_total - S_bethe) / S_bethe: the
+  // percent deviation of the simulation's ~unrestricted estimator from the
+  // uncorrected relativistic Bethe value — the correct pairing, since both
+  // are the same physical quantity (the restricted estimator is not: it
+  // depends on the production cut). Positive at low energy (missing
+  // shell/Barkas corrections), ~0 at 100-1000 MeV, negative at high energy
+  // (missing density effect). Empty where the total estimator is undefined.
   std::ofstream out("dedx_summary.csv");
   out << "E_MeV,n_events,n_exit,"
          "dedx_restricted_MeV_cm,dedx_restricted_err_MeV_cm,"
          "S_restricted_MeV_cm2_g,"
          "dedx_total_MeV_cm,dedx_total_err_MeV_cm,S_total_MeV_cm2_g,"
          "bethe_no_corr_MeV_cm,S_bethe_no_corr_MeV_cm2_g,"
+         "rel_err_bethe_vs_total_pct,"
          "straggling_rms_MeV,balance_residual_MeV\n";
   for (const RunResult& r : results) {
+    const double betheLin = BetheNoCorr_Linear_MeV_cm(r.E);
     out << r.E << ',' << r.n << ',' << r.nExit << ','
         << r.dedxRestricted << ',' << r.dedxRestrictedErr << ','
-        << r.dedxRestricted / cfg::kDensity << ','
-        << r.dedxTotal << ',' << r.dedxTotalErr << ','
-        << r.dedxTotal / cfg::kDensity << ','
-        << BetheNoCorr_Linear_MeV_cm(r.E) << ','
-        << BetheNoCorr_Mass_MeVcm2_g(r.E) << ','
-        << r.stragglingRms << ',' << r.balanceResidual << '\n';
+        << r.dedxRestricted / cfg::kDensity << ',';
+    if (r.nExit > 0) {
+      const double relErrPct = 100. * (r.dedxTotal - betheLin) / betheLin;
+      out << r.dedxTotal << ',' << r.dedxTotalErr << ','
+          << r.dedxTotal / cfg::kDensity << ','
+          << betheLin << ',' << BetheNoCorr_Mass_MeVcm2_g(r.E) << ','
+          << relErrPct << ',';
+    } else {
+      // Primary never exits: total estimator and its comparison undefined.
+      out << ",,," << betheLin << ',' << BetheNoCorr_Mass_MeVcm2_g(r.E)
+          << ",,";
+    }
+    out << r.stragglingRms << ',' << r.balanceResidual << '\n';
   }
   out.close();
   printf("\nWritten: dedx_vs_energy.png/.pdf, straggling_3d.png, "
@@ -789,8 +855,8 @@ void analyze_dedx(const char* dataDir = ".")
   printf("=== slab Bethe validation analysis (relativistic Bethe, "
          "no corrections) ===\n");
   printf("cut tag = %s, I = %g eV, Z/A = %.6f, rho = %g g/cm3, "
-         "thickness = %g mm, E >= %g MeV, grid points = %zu\n\n",
+         "thin-slab rule (t <= %g mm), E >= %g MeV, grid points = %zu\n\n",
          cfg::kCutTag, cfg::kI_eV, cfg::kZoverA, cfg::kDensity,
-         cfg::kThicknessMM, cfg::kEMinMeV, cfg::kEnergiesMeV.size());
+         cfg::kThicknessMaxMM, cfg::kEMinMeV, cfg::kEnergiesMeV.size());
   AnalyzeScan(dataDir);
 }
