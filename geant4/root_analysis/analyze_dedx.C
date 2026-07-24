@@ -14,6 +14,21 @@
 //   3) The Bragg / depth-dose curve from the DepthEdep histogram.
 //   4) A 3D straggling surface: the per-event deposit distribution
 //      (normalized to its per-run mean) for every energy of the sweep.
+//   5) A cross-material error-summary table (material, actual energy range
+//      analyzed, mean |rel. error| for sim-vs-Bethe, sim-vs-PSTAR and
+//      Bethe-vs-PSTAR) — see ERROR SUMMARY TABLE below.
+//
+// UNCERTAINTY PROPAGATION (analytic side): the Bethe reference itself
+// carries an uncertainty, propagated through {K, Z/A, m_e, I} (+ rho for
+// the linear form), using the SAME standard uncorrelated-propagation
+// formula and the SAME source values (ICRU 90 for I, IUPAC/CIAAW for the
+// atomic weights behind Z/A, CODATA 2022 for K and m_e, an assumed 0.5%
+// on rho) as propagate_mass_stopping_power_uncertainty() /
+// propagate_linear_stopping_power_uncertainty() in analytic_solution.ipynb
+// — see BetheNoCorr_*_Uncertainty_* below. dedx_summary.csv combines this
+// with the simulation's own statistical error (dedxTotalErr) to report a
+// propagated uncertainty on rel_err_bethe_vs_total_pct, not just the
+// central value.
 //
 // ANALYTIC REFERENCE (consistent with analytic_solution.ipynb and the
 // "Relativistic Bethe" section of Bethe_Full_Derivation.pdf):
@@ -23,28 +38,91 @@
 // deliberately EXCLUDING shell (C/Z), Barkas (z^3), Bloch and density
 // (Sternheimer delta) corrections, and using the heavy-projectile
 // approximation Tmax ~ 2 m_e c^2 beta^2 gamma^2 inside the logarithm.
-// Constants are CODATA 2022 / PDG; water Z/A follows the Bragg additivity
-// rule with NIST STAR mass fractions; I = 78(2) eV from ICRU 90.
+// Constants are CODATA 2022 / PDG. Z/A, I and rho are MATERIAL-DEPENDENT
+// (see MATERIAL AUTO-DETECTION below); water's Z/A follows the Bragg
+// additivity rule with NIST STAR mass fractions, I = 78(2) eV (ICRU 90).
 // EXPECTED BEHAVIOR: this curve systematically UNDERESTIMATES both NIST
 // PSTAR and the Geant4 simulation, increasingly below ~10 MeV — that is a
 // documented consequence of the project scope, NOT a bug.
 //
-// FILE-NAME TAGS: energies (and the cut) are 'p'-encoded in file names,
-// because G4AnalysisManager treats everything after the last '.' as a file
-// extension: 0.001 MeV -> "dedx_0p001MeV_cut0p01mm_nt_slab.csv". The
-// EnergyTag() helper below must stay consistent with etag() in
-// generate_energy_scan.py.
+// MATERIAL AUTO-DETECTION: this macro supports water, aluminium, copper
+// and lead (I, Z/A, rho and their uncertainties for each — see
+// kMaterials below — taken from analytic_solution.ipynb, same sourcing:
+// ICRU 90/49 for I, IUPAC/CIAAW for the atomic weights behind Z/A,
+// PubChem for rho). AnalyzeScan()/analyze_dedx() detect which material a
+// run is by scanning the data directory for the material tag embedded in
+// the file names by generate_energy_scan.py's MATERIAL_KEY (see FILE-NAME
+// TAGS below); AnalyzeRun() detects it directly from the given file name.
+// Air is NOT included: it has no sourced I value in this project (it is
+// only a bridging material for the Bragg-Kleeman range-scaling rule, not
+// a dE/dx validation target) — a directory of air data falls back to
+// water with a warning.
+//
+// FILE-NAME TAGS: output files are named
+// "dedx_<materialTag>_<Etag>MeV_<cutTag>", e.g.
+// "dedx_water_0p001MeV_cut0p01mm_nt_slab.csv" — 'p'-encoded because
+// G4AnalysisManager treats everything after the last '.' in a file name
+// as a file-type extension. The EnergyTag() helper below must stay
+// consistent with etag() in generate_energy_scan.py, and the material
+// tags in kMaterials (below) with bk.G4_MATERIAL_NAME's keys in
+// bragg_kleeman_materials.py.
+//
+// NIST PSTAR COMPARISON: in addition to the analytic Bethe reference, the
+// scan is compared against the tabulated NIST PSTAR "total" stopping power
+// (electronic + nuclear, stopping_power_total_MeV_cm2_g column) — the same
+// quantity as the simulation's total (~unrestricted) estimator and the
+// benchmark already used in analytic_solution.ipynb (100 MeV water: PSTAR
+// total = 7.289 MeV cm2/g). Files are expected as
+// "<pstarDir>/pstar_<materialPstarName>.csv" with columns
+// material,matno,energy_MeV,stopping_power_electronic_MeV_cm2_g,
+// stopping_power_nuclear_MeV_cm2_g,stopping_power_total_MeV_cm2_g,
+// csda_range_g_cm2,projected_range_g_cm2,detour_factor (the NIST PSTAR
+// preferred-number energy grid, same as energy_grid.csv). Note the
+// materialPstarName spelling mismatch with the G4-sweep tag for aluminium:
+// PSTAR uses American "aluminum" (see kMaterials' pstarStem field below).
+// The PSTAR data directory is configurable — see cfg::kPstarDir below, and
+// the optional pstarDir argument of AnalyzeScan()/analyze_dedx(). Missing
+// or out-of-range PSTAR data degrades gracefully: the comparison is simply
+// left out (dedx_summary.csv fields empty), not a fatal error. In addition
+// to the two simulation comparisons (vs Bethe, vs PSTAR), dedx_summary.csv
+// also carries a THEORY-VS-NIST comparison (rel_err_bethe_vs_pstar_pct/
+// _err) that needs no simulation data at all — see BetheNoCorr_Mass_MeVcm2_g
+// vs PSTAR directly, gated only on PSTAR coverage (not on n_exit).
+//
+// ENERGY RANGE: cfg::kEMinMeV / cfg::kEMaxMeV bound which grid points are
+// analyzed (material detection, the sweep loop, dedx_summary.csv rows, and
+// the error-summary table's reported range) WITHOUT touching kEnergiesMeV/
+// energy_grid.csv itself — e.g. set kEMaxMeV = 300.0 to restrict everything
+// to the clinical 3-300 MeV band. kEMaxMeV can be set to effectively have "no
+// upper limit" so existing behavior is unchanged unless edited with a value of 1.0e9.
+//
+// ERROR SUMMARY TABLE: every AnalyzeScan()/analyze_dedx() call appends one
+// row (material, ACTUAL energy range analyzed, mean |rel. error| for each
+// of the three comparisons above) to a session-wide table, printed again in
+// full (and (re)written to error_summary.csv) at the end of every call —
+// see g_errorSummary/PrintErrorSummaryTable() below. Running it once per
+// material in the same ROOT session (see Usage) therefore builds up ONE
+// consolidated table across all of them, instead of having to compare
+// several dedx_summary.csv files by hand.
 //
 // Usage (from the directory containing the CSV files):
 //   root -l -b -q analyze_dedx.C                      # full sweep + plots
 //   root -l 'analyze_dedx.C("path/to/data")'          # data in another dir
+//   root -l 'analyze_dedx.C("path/to/data", "path/to/nist_data")'
+//                                                       # + custom PSTAR dir
 //   root -l
 //     .L analyze_dedx.C
-//     AnalyzeRun("dedx_150MeV_cut0p01mm_nt_slab.csv", 150.0);  // single run
-//     PlotBragg("dedx_150MeV_cut0p01mm_h1_DepthEdep.csv");
+//     AnalyzeRun("dedx_water_150MeV_cut0p01mm_nt_slab.csv", 150.0);  // single run
+//     PlotBragg("dedx_water_150MeV_cut0p01mm_h1_DepthEdep.csv");
+//     // Multiple materials in one session -> one consolidated error table:
+//     AnalyzeScan("data_water"); AnalyzeScan("data_al");
+//     AnalyzeScan("data_cu");    AnalyzeScan("data_pb");
+//     PrintErrorSummaryTable();  // (also auto-printed after each call above)
 //
-// The configuration block below (energy grid CSV, cut tag, slab thickness,
-// material constants) must match the macros used to produce the data.
+// The configuration block below (energy grid CSV, cut tag, thickness,
+// energy range, PSTAR directory) must match the macros/data layout used to
+// produce the data; the material-specific constants (Z/A, I, rho) are set
+// automatically, not edited here.
 // ============================================================================
 #include "TCanvas.h"
 #include "TGraphErrors.h"
@@ -61,6 +139,7 @@
 #include "TGaxis.h"
 #include "TMath.h"
 #include "TPad.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -114,6 +193,13 @@ namespace cfg
 // validity range there (see the Sommerfeld-parameter discussion in the
 // derivation document) and sub-range protons stop inside the slab anyway.
 const double kEMinMeV = 3.0;
+// Maximum energy included in the analysis (MeV) — the upper-bound analog of
+// kEMinMeV. Points above this are skipped the same way (material detection,
+// the sweep loop, the summary table), letting the analysis be restricted to
+// a sub-range (e.g. the clinical 3-300 MeV band) without touching
+// kEnergiesMeV/energy_grid.csv itself. Effectively "no upper limit" by
+// default so existing behavior is unchanged unless this is edited.
+const double kEMaxMeV = 300;  //1.0e9;
 // Sweep energies in MeV: NIST PSTAR preferred-number grid, same file used by
 // generate_energy_scan.py (path relative to where root is executed).
 const std::vector<double> kEnergiesMeV =
@@ -122,38 +208,57 @@ const std::vector<double> kEnergiesMeV =
 // generate_energy_scan.py ("cut0p01mm" for the 0.01 mm fine cut;
 // "cut1mm" for the 1 mm default).
 const char* kCutTag = "cut0p01mm";
-// Ntuple file pattern: dedx_<Etag>MeV_<cutTag>_nt_slab.csv
-// (%s placeholders: dataDir, EnergyTag(E), kCutTag)
-const char* kNtupleFilePattern = "%s/dedx_%sMeV_%s_nt_slab.csv";
+// Ntuple file pattern: dedx_<materialTag>_<Etag>MeV_<cutTag>_nt_slab.csv
+// (%s placeholders: dataDir, materialTag, EnergyTag(E), kCutTag)
+const char* kNtupleFilePattern = "%s/dedx_%s_%sMeV_%s_nt_slab.csv";
+// NIST PSTAR reference data directory (relative to where root is executed
+// by default, same convention as the energy_grid.csv path above) — override
+// via the pstarDir argument of AnalyzeScan()/analyze_dedx() if the data
+// lives somewhere else. Files expected as "<kPstarDir>/pstar_<name>.csv".
+const char* kPstarDir = "../../nist_data";
 // SLAB THICKNESS IS NO LONGER A SINGLE NUMBER: the generator applies the
 // thin-slab rule t(E) = clamp(5% x range(E), 1 um, 5 mm), with the range
-// from the Bragg-Kleeman rule R = alpha x E^p for protons in water
-// (alpha = 0.002777 cm/MeV^p, p = 1.723, CSDA approximation,
-// doi:10.48550/arXiv.2011.00285), so that the fractional energy loss stays
-// small at EVERY sweep energy and the total estimator (E_in - E_out)/track
-// is defined across the whole validation band (with a fixed 5 mm the
-// measurement silently changed nature along the sweep: thin-slab dE/dx
-// above ~100 MeV, full-stopping below ~20.5 MeV — a systematic gap, not
-// comparable point by point against theory or PSTAR). The analysis needs
-// no thickness input at all: every estimator divides by the per-event
-// track length from the ntuple.
+// from the (material-specific) Bragg-Kleeman rule R = alpha x E^p, CSDA
+// approximation, so that the fractional energy loss stays small at EVERY
+// sweep energy and the total estimator (E_in - E_out)/track is defined
+// across the whole validation band. The analysis needs no thickness input
+// at all: every estimator divides by the per-event track length from the
+// ntuple, regardless of material.
 const double kThicknessMaxMM = 5.0;  // informational (upper clamp)
-// --- Absorber material constants: liquid water -----------------------------
-// Kept numerically identical to the WATER Material in analytic_solution.ipynb.
-// Z/A by the Bragg additivity rule (ICRU 37/49, Sec. 2.5.2 Eq. 2.22) with
-// NIST STAR mass fractions (matno 276) and IUPAC 2021 atomic weights:
-//   H: w = 0.111894, A = 1.0080(2);  O: w = 0.888106, A = 15.999(1).
-const double kWaterWH = 0.111894, kWaterAH = 1.0080, kWaterZH = 1.0;
-const double kWaterWO = 0.888106, kWaterAO = 15.999, kWaterZO = 8.0;
-const double kZoverA =
-    kWaterWH * (kWaterZH / kWaterAH) + kWaterWO * (kWaterZO / kWaterAO);
-const double kDensity = 1.0;      // g/cm3 (PubChem; as in the notebook)
-const double kI_eV = 78.0;        // mean excitation energy, ICRU 90: 78(2) eV
 // --- Physical constants (CODATA 2022 / PDG, as in the notebook) -------------
 const double kMp = 938.27208943;    // proton rest mass energy, MeV
 const double kMe = 0.51099895069;   // electron rest mass energy, MeV
 const double kK = 0.307075;         // 4 pi N_A r_e^2 m_e c^2, MeV cm2 / mol
 const double kEvToMeV = 1e-6;       // eV -> MeV
+const double kDeltaK = 3.0e-10;     // MeV cm2/mol, CODATA-propagated
+const double kDeltaMe = 1.6e-10;    // MeV, CODATA 2022: me c^2 = ...69(16) MeV
+// --- Water constituents (H2O), kept as raw element data because water is
+// a COMPOUND: its Z/A and Delta(Z/A) need the two-element Bragg additivity
+// rule (ICRU 37/49, Sec. 2.5.2 Eq. 2.22), unlike a pure element. NIST STAR
+// mass fractions (matno 276) and IUPAC 2021 atomic weights:
+//   H: w = 0.111894, A = 1.0080(2);  O: w = 0.888106, A = 15.999(1).
+// Used only by the water entry of kMaterials, below.
+const double kWaterWH = 0.111894, kWaterAH = 1.0080, kWaterZH = 1.0;
+const double kWaterWO = 0.888106, kWaterAO = 15.999, kWaterZO = 8.0;
+const double kWaterDeltaAH = 0.0002;  // IUPAC/CIAAW: A(H) = 1.0080(2) g/mol
+const double kWaterDeltaAO = 0.001;   // IUPAC/CIAAW: A(O) = 15.999(1) g/mol
+// --- Active material -----------------------------------------------------
+// NOT hardcoded to water anymore: these are overwritten at runtime by
+// SetActiveMaterial(), called by AnalyzeScan()/AnalyzeRun() once they
+// detect which material a run's data belongs to (see kMaterials and the
+// detection helpers below "Material properties table"). Initialized to
+// water's values so anything evaluated before detection runs (there
+// shouldn't be any) gets the previous water-only behavior, not garbage.
+const char* kMaterialName = "WATER";
+double kZoverA =
+    kWaterWH * (kWaterZH / kWaterAH) + kWaterWO * (kWaterZO / kWaterAO);
+double kDeltaZoverA = TMath::Sqrt(
+    TMath::Sq(kWaterWH * kWaterZH / (kWaterAH * kWaterAH) * kWaterDeltaAH) +
+    TMath::Sq(kWaterWO * kWaterZO / (kWaterAO * kWaterAO) * kWaterDeltaAO));
+double kDensity = 1.0;       // g/cm3 (PubChem; as in the notebook)
+double kDeltaDensity = kDensity * 0.005;  // 0.5% ASSUMED (no source located)
+double kI_eV = 78.0;         // mean excitation energy, ICRU 90: 78(2) eV
+double kDeltaI_eV = 2.0;     // ICRU 90: I(water) = 78(2) eV
 // --- Straggling surface (AnalyzeScan) ---------------------------------------
 // The deposit of each event is normalized to its run's mean, so runs whose
 // absolute deposits differ by orders of magnitude across the sweep share
@@ -166,6 +271,234 @@ const int kStragNBinsY = 80;
 const double kStragYMin = 0.2;   // Edep / <Edep>
 const double kStragYMax = 3.0;
 }  // namespace cfg
+// ============================================================================
+// Material properties table: I (ICRU 90/49), Z/A (Bragg additivity rule for
+// water, a compound; a pure element's Z/A is just Z/A_atomic) and their
+// uncertainties, plus density (PubChem) — same values and sources as the
+// MATERIALS dict in analytic_solution.ipynb. Used to auto-configure the
+// cfg::k* active-material variables above for whichever material's data is
+// found in a given run (SetActiveMaterial() below). "tag" is the file-name
+// token generate_energy_scan.py's MATERIAL_KEY embeds in output file names
+// (dedx_<tag>_<Etag>MeV_<cutTag>...).
+//
+// AIR IS DELIBERATELY NOT INCLUDED: this project has no sourced mean
+// excitation energy I for air (analytic_solution.ipynb only tabulates I for
+// water/aluminium/copper/lead), and air is not a target of the dE/dx
+// validation — it is only a bridging material for the Bragg-Kleeman
+// range-scaling rule in generate_energy_scan.py (see
+// bragg_kleeman_materials.py). A directory of MATERIAL_KEY="air" data will
+// not match any tag below and falls back to water, with a warning (see
+// DetectMaterialIndexInDir()).
+// ============================================================================
+struct MaterialProps
+{
+  const char* name;              // display name (dedx_summary.csv column)
+  const char* tag;                // file-name tag (matches generate_energy_scan.py)
+  const char* pstarStem;          // NIST PSTAR file stem: pstar_<pstarStem>.csv
+  double density, deltaDensity;   // g/cm3
+  double ZoverA, deltaZoverA;     // mol/g
+  double I_eV, deltaI_eV;         // eV
+};
+// Z/A and its uncertainty for a PURE ELEMENT: Z/A = Z/A_atomic,
+// Delta(Z/A) = (Z/A)/A_atomic * Delta(A_atomic) — same formula as the
+// non-compound branch of _delta_ZA() in analytic_solution.ipynb.
+static MaterialProps ElementMaterial(const char* name, const char* tag,
+                                     const char* pstarStem,
+                                     double Z, double A, double deltaA,
+                                     double density, double deltaDensity,
+                                     double I_eV, double deltaI_eV)
+{
+  const double ZoverA = Z / A;
+  const double deltaZoverA = (ZoverA / A) * deltaA;
+  return MaterialProps{name, tag, pstarStem, density, deltaDensity,
+                       ZoverA, deltaZoverA, I_eV, deltaI_eV};
+}
+// Water needs the two-element (H, O) Bragg additivity rule instead of the
+// single-element formula above; reuses the raw constituent data already
+// declared in cfg (kWaterWH, kWaterAH, ... kWaterDeltaAO).
+static MaterialProps WaterMaterial()
+{
+  return MaterialProps{"WATER", "water", "water", 1.0, 1.0 * 0.005,
+                       cfg::kZoverA, cfg::kDeltaZoverA, 78.0, 2.0};
+}
+// Sourcing for aluminium/copper/lead (identical values to
+// analytic_solution.ipynb's MATERIALS dict):
+//   I: ICRU Report 49 (1993), Table 2.8, Sec. 2.5.1.
+//   A (standard atomic weight): IUPAC/CIAAW 2021, Table 2.
+//   rho: PubChem Periodic Table (pubchem.ncbi.nlm.nih.gov/ptable/density);
+//        0.5% ASSUMED uncertainty (no source located for solid densities).
+// NOTE the pstarStem spelling: NIST PSTAR's own downloaded file names use
+// American English ("aluminum"), while this project's own G4-sweep file-tag
+// convention (the "tag" field, matching bragg_kleeman_materials.py) uses
+// British English ("aluminium") — two independent, deliberately-kept
+// spellings, not a typo in either place.
+static const std::vector<MaterialProps> kMaterials = {
+  WaterMaterial(),
+  // Aluminium: Z=13, A = 26.9815384(3) g/mol, I = 166(2) eV, rho = 2.70 g/cm3.
+  ElementMaterial("ALUMINIUM", "aluminium", "aluminum", 13.0, 26.9815384,
+                  0.0000003, 2.70, 2.70 * 0.005, 166.0, 2.0),
+  // Copper: Z=29, A = 63.546(3) g/mol, I = 322(10) eV, rho = 8.96 g/cm3.
+  ElementMaterial("COPPER", "copper", "copper", 29.0, 63.546, 0.003,
+                  8.96, 8.96 * 0.005, 322.0, 10.0),
+  // Lead: Z=82, A = 207.2(1.1) g/mol (large uncertainty is genuine natural
+  // isotopic variability, IUPAC's own interval-covering value, not a typo),
+  // I = 823(30) eV, rho = 11.34 g/cm3.
+  ElementMaterial("LEAD", "lead", "lead", 82.0, 207.2, 1.1,
+                  11.34, 11.34 * 0.005, 823.0, 30.0),
+};
+// Overwrites the cfg::k* active-material variables from kMaterials[index].
+void SetActiveMaterial(int index)
+{
+  const MaterialProps& m = kMaterials[index];
+  cfg::kMaterialName = m.name;
+  cfg::kDensity = m.density;
+  cfg::kDeltaDensity = m.deltaDensity;
+  cfg::kZoverA = m.ZoverA;
+  cfg::kDeltaZoverA = m.deltaZoverA;
+  cfg::kI_eV = m.I_eV;
+  cfg::kDeltaI_eV = m.deltaI_eV;
+}
+int MaterialIndexFromTag(const std::string& tag)
+{
+  for (size_t m = 0; m < kMaterials.size(); ++m)
+    if (tag == kMaterials[m].tag) return (int)m;
+  return -1;
+}
+// Extracts the material tag: the token between "dedx_" and the next '_' in
+// a ntuple file's base name, matching generate_energy_scan.py's convention
+// dedx_<materialTag>_<Etag>MeV_<cutTag>_nt_slab.csv. Returns "" if the file
+// name doesn't start with "dedx_" or has no further '_' (e.g. a pre-
+// material-tag legacy file name).
+std::string MaterialTagFromFilename(const std::string& path)
+{
+  const size_t slash = path.find_last_of('/');
+  const std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
+  const std::string prefix = "dedx_";
+  if (base.rfind(prefix, 0) != 0) return "";
+  const size_t start = prefix.size();
+  const size_t us = base.find('_', start);
+  if (us == std::string::npos) return "";
+  return base.substr(start, us - start);
+}
+// Scans `dataDir` for which known material's tagged files are present (each
+// candidate tag is tried against a few grid energies), used by
+// AnalyzeScan()/analyze_dedx() to auto-configure the analysis without the
+// caller having to specify a material by hand. Falls back to WATER (index
+// 0) with a warning if nothing matches (legacy untagged file names, or
+// MATERIAL_KEY = "air", which has no entry in kMaterials — see the note
+// above kMaterials).
+int DetectMaterialIndexInDir(const char* dataDir)
+{
+  std::vector<int> found;
+  for (size_t m = 0; m < kMaterials.size(); ++m) {
+    for (double E : cfg::kEnergiesMeV) {
+      if (E < cfg::kEMinMeV || E > cfg::kEMaxMeV) continue;
+      TString f = TString::Format(cfg::kNtupleFilePattern, dataDir,
+                                  kMaterials[m].tag, EnergyTag(E).Data(),
+                                  cfg::kCutTag);
+      std::ifstream test(f.Data());
+      if (test) { found.push_back((int)m); break; }
+    }
+  }
+  if (found.empty()) {
+    printf("[warning] DetectMaterialIndexInDir: no known-material data "
+           "files found in '%s' (tried: water, aluminium, copper, lead) — "
+           "defaulting to WATER. Check that generate_energy_scan.py's "
+           "MATERIAL_KEY-tagged file names match cfg::kNtupleFilePattern.\n",
+           dataDir);
+    return 0;
+  }
+  if (found.size() > 1) {
+    printf("[warning] DetectMaterialIndexInDir: data files for %zu "
+           "different materials found in '%s' — using '%s'. Keep one "
+           "material per directory for a clean automatic analysis.\n",
+           found.size(), dataDir, kMaterials[found[0]].name);
+  }
+  return found[0];
+}
+// ============================================================================
+// NIST PSTAR reference data — loader and log-log interpolation
+// ============================================================================
+// One tabulated (energy, total mass stopping power) point from a
+// pstar_<name>.csv file (see the NIST PSTAR COMPARISON note in the header
+// comment for the full column layout; only energy_MeV and
+// stopping_power_total_MeV_cm2_g are needed here).
+struct PstarPoint
+{
+  double E_MeV;
+  double S_total_MeVcm2_g;
+};
+// Loads "<pstarDir>/pstar_<pstarStem>.csv". Proper comma-split parsing (not
+// sscanf with "%lf"): the first two columns (material, matno) are strings,
+// not numbers. Returns an empty vector (with a warning) if the file cannot
+// be opened — callers must treat that as "PSTAR comparison unavailable for
+// this material/directory", not a fatal error.
+std::vector<PstarPoint> LoadPstarData(const std::string& pstarDir,
+                                      const std::string& pstarStem)
+{
+  std::vector<PstarPoint> pts;
+  const std::string path = pstarDir + "/pstar_" + pstarStem + ".csv";
+  std::ifstream in(path);
+  if (!in) {
+    printf("[warning] LoadPstarData: cannot open '%s' — NIST PSTAR "
+           "comparison will be skipped for this run. Check the pstarDir "
+           "argument / cfg::kPstarDir (currently a path relative to where "
+           "root is executed).\n", path.c_str());
+    return pts;
+  }
+  std::string line;
+  if (std::getline(in, line)) { /* skip header row */ }
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    std::stringstream ss(line);
+    std::string field;
+    std::vector<std::string> cols;
+    while (std::getline(ss, field, ',')) cols.push_back(field);
+    // material,matno,energy_MeV,stopping_power_electronic_MeV_cm2_g,
+    // stopping_power_nuclear_MeV_cm2_g,stopping_power_total_MeV_cm2_g,...
+    if (cols.size() < 6) continue;
+    try {
+      PstarPoint p;
+      p.E_MeV = std::stod(cols[2]);
+      p.S_total_MeVcm2_g = std::stod(cols[5]);
+      pts.push_back(p);
+    } catch (const std::invalid_argument&) {
+      continue;  // stray non-numeric line — skip
+    }
+  }
+  printf("Loaded %zu NIST PSTAR points from '%s'\n", pts.size(), path.c_str());
+  return pts;
+}
+// Log-log linear interpolation of the PSTAR total mass stopping power at
+// E_MeV: ln(S) is close to linear in ln(E) locally (the underlying physics
+// is close to a power law over any short interval), which is the standard
+// interpolation choice for stopping-power tables spanning decades in both
+// axes. Given the sweep energies already coincide with PSTAR's own grid
+// (both come from the same energy_grid.csv), this is mostly a safety net
+// for --log N sweeps that fall between grid points, not a big extrapolation.
+// Returns false (S_out untouched) if pts has fewer than 2 entries or E_MeV
+// falls outside PSTAR's own tabulated range — deliberately NOT extrapolated
+// beyond NIST's own data.
+bool InterpolatePstarLogLog(const std::vector<PstarPoint>& pts, double E_MeV,
+                            double& S_out)
+{
+  if (pts.size() < 2) return false;
+  if (E_MeV < pts.front().E_MeV || E_MeV > pts.back().E_MeV) return false;
+  size_t hi = 0;
+  while (hi < pts.size() && pts[hi].E_MeV < E_MeV) ++hi;
+  if (hi == 0) { S_out = pts.front().S_total_MeVcm2_g; return true; }
+  if (hi >= pts.size()) { S_out = pts.back().S_total_MeVcm2_g; return true; }
+  const PstarPoint& lo = pts[hi - 1];
+  const PstarPoint& up = pts[hi];
+  if (E_MeV == lo.E_MeV) { S_out = lo.S_total_MeVcm2_g; return true; }
+  const double lnE = std::log(E_MeV);
+  const double lnElo = std::log(lo.E_MeV), lnEup = std::log(up.E_MeV);
+  const double lnSlo = std::log(lo.S_total_MeVcm2_g);
+  const double lnSup = std::log(up.S_total_MeVcm2_g);
+  const double t = (lnE - lnElo) / (lnEup - lnElo);
+  S_out = std::exp(lnSlo + t * (lnSup - lnSlo));
+  return true;
+}
 // ============================================================================
 // Analytical stopping power: pure relativistic Bethe, NO corrections
 // (exactly the mass_stopping_power() of analytic_solution.ipynb)
@@ -196,6 +529,75 @@ double BetheNoCorr_Mass_MeVcm2_g(double Ekin_MeV)
 double BetheNoCorr_Linear_MeV_cm(double Ekin_MeV)
 {
   return BetheNoCorr_Mass_MeVcm2_g(Ekin_MeV) * cfg::kDensity;
+}
+// ============================================================================
+// Analytic Bethe uncertainty propagation — same formula, variable set and
+// source values as propagate_mass_stopping_power_uncertainty() /
+// propagate_linear_stopping_power_uncertainty() in analytic_solution.ipynb.
+// Partial derivatives below are the closed-form equivalent of that
+// notebook's sympy.diff() output for
+//   S = K z^2 (Z/A) (1/beta^2) [ln(2 me beta^2 gamma^2 / I) - beta^2]
+// (z = 1 for protons): dS/dK and dS/d(Z/A) are just S/K and S/(Z/A) since S
+// is linear in both; dS/dme and dS/dI come from differentiating the log
+// term, ln(2 me beta^2 gamma^2) - ln(I), whose me- and I-dependence is
+// purely logarithmic (d/dme = 1/me, d/dI = -1/I).
+// ============================================================================
+// Uncertainty on the MASS stopping power, MeV cm2/g.
+double BetheNoCorr_Mass_Uncertainty_MeVcm2_g(double Ekin_MeV)
+{
+  const double gamma = 1.0 + Ekin_MeV / cfg::kMp;
+  const double beta2 = 1.0 - 1.0 / (gamma * gamma);
+  const double I_MeV = cfg::kI_eV * cfg::kEvToMeV;
+  const double bracket =
+      TMath::Log(2.0 * cfg::kMe * beta2 * gamma * gamma / I_MeV) - beta2;
+
+  const double dS_dK = cfg::kZoverA / beta2 * bracket;                // = S / K
+  const double dS_dZA = cfg::kK / beta2 * bracket;                    // = S / (Z/A)
+  const double dS_dme = cfg::kK * cfg::kZoverA / beta2 * (1.0 / cfg::kMe);
+  const double dS_dI = cfg::kK * cfg::kZoverA / beta2 * (-1.0 / I_MeV);
+
+  const double term_K = dS_dK * cfg::kDeltaK;
+  const double term_ZA = dS_dZA * cfg::kDeltaZoverA;
+  const double term_me = dS_dme * cfg::kDeltaMe;
+  const double term_I = dS_dI * (cfg::kDeltaI_eV * cfg::kEvToMeV);
+
+  // Combined in quadrature (uncorrelated sources), not by direct sum.
+  return TMath::Sqrt(term_K * term_K + term_ZA * term_ZA +
+                      term_me * term_me + term_I * term_I);
+}
+// Uncertainty on the LINEAR stopping power, MeV/cm.
+// Delta(S_linear) = sqrt( (rho*Delta(S_mass))^2 + (S_mass*Delta(rho))^2 ),
+// rho uncorrelated with the mass-stopping-power sources (K, Z/A, me, I).
+double BetheNoCorr_Linear_Uncertainty_MeV_cm(double Ekin_MeV)
+{
+  const double S_mass = BetheNoCorr_Mass_MeVcm2_g(Ekin_MeV);
+  const double dS_mass = BetheNoCorr_Mass_Uncertainty_MeVcm2_g(Ekin_MeV);
+  return TMath::Sqrt(TMath::Sq(cfg::kDensity * dS_mass) +
+                      TMath::Sq(S_mass * cfg::kDeltaDensity));
+}
+// Propagated uncertainty on rel_err_bethe_vs_total_pct =
+// 100*(S_sim - S_bethe)/S_bethe, treating the simulation's total
+// (~unrestricted) estimator (statistical error S_simErr) and the analytic
+// Bethe value (propagated error S_betheErr, from the functions above) as
+// independent sources, combined via the standard uncorrelated formula:
+//   d(rel)/dS_sim   =  100 / S_bethe
+//   d(rel)/dS_bethe = -100 * S_sim / S_bethe^2
+double RelErrPctUncertainty(double S_sim, double S_simErr, double S_bethe,
+                            double S_betheErr)
+{
+  const double term_sim = (100. / S_bethe) * S_simErr;
+  const double term_bethe = (100. * S_sim / (S_bethe * S_bethe)) * S_betheErr;
+  return TMath::Sqrt(term_sim * term_sim + term_bethe * term_bethe);
+}
+// Propagated uncertainty on rel_err_pstar_vs_total_pct =
+// 100*(S_sim - S_pstar)/S_pstar, STATISTICAL-ERROR-ONLY: unlike the analytic
+// Bethe reference (RelErrPctUncertainty above, which propagates {K, Z/A,
+// m_e, I}), NIST PSTAR publishes no uncertainty on its tabulated stopping
+// powers, so only the simulation's own statistical error (S_simErr) is
+// propagated: d(rel)/dS_sim = 100/S_pstar, S_pstar treated as exact.
+double RelErrPctUncertaintyStatOnly(double S_sim, double S_simErr, double S_ref)
+{
+  return (100. / S_ref) * S_simErr;
 }
 // ============================================================================
 // CSV ntuple loader (merged file produced by the application)
@@ -362,10 +764,24 @@ RunResult AnalyzeRunData(const RunData& d, double Enominal)
 // Standalone single-run analysis with a canvas of the deposit distribution.
 void AnalyzeRun(const char* csvFile, double Enominal)
 {
+  // Auto-detect the material from the file name (dedx_<materialTag>_...)
+  // and configure cfg::k* accordingly, so a standalone AnalyzeRun() call
+  // (e.g. from an interactive ROOT session, without going through
+  // AnalyzeScan()/analyze_dedx()) still compares against the right Bethe
+  // curve instead of silently defaulting to water.
+  const std::string materialTag = MaterialTagFromFilename(csvFile);
+  const int matIdx = materialTag.empty() ? -1 : MaterialIndexFromTag(materialTag);
+  if (matIdx >= 0) {
+    SetActiveMaterial(matIdx);
+  } else {
+    printf("[warning] AnalyzeRun: could not detect the material from '%s' "
+           "(expected a 'dedx_<materialTag>_...' file name) — keeping the "
+           "currently active material (%s)\n", csvFile, cfg::kMaterialName);
+  }
   RunData d = LoadNtuple(csvFile);
   if (!d.ok) return;
   RunResult r = AnalyzeRunData(d, Enominal);
-  printf("\n--- %s ---\n", csvFile);
+  printf("\n--- %s (material: %s) ---\n", csvFile, cfg::kMaterialName);
   printf("  events                  : %ld\n", r.n);
   printf("  exiting primaries       : %ld / %ld\n", r.nExit, r.n);
   printf("  dE/dx restricted (sim)  : %.4f +- %.4f MeV/cm  "
@@ -375,9 +791,12 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   printf("  dE/dx total      (sim)  : %.4f +- %.4f MeV/cm  "
          "(S = %.4f MeV cm2/g)\n",
          r.dedxTotal, r.dedxTotalErr, r.dedxTotal / cfg::kDensity);
-  printf("  Bethe, no corrections   : %.4f MeV/cm  (S = %.4f MeV cm2/g)\n",
+  printf("  Bethe, no corrections   : %.4f +- %.4f MeV/cm  "
+         "(S = %.4f +- %.4f MeV cm2/g)\n",
          BetheNoCorr_Linear_MeV_cm(Enominal),
-         BetheNoCorr_Mass_MeVcm2_g(Enominal));
+         BetheNoCorr_Linear_Uncertainty_MeV_cm(Enominal),
+         BetheNoCorr_Mass_MeVcm2_g(Enominal),
+         BetheNoCorr_Mass_Uncertainty_MeVcm2_g(Enominal));
   printf("  straggling (rms Edep)   : %.4f MeV\n", r.stragglingRms);
   printf("  <balance residual>      : %.4g MeV\n", r.balanceResidual);
   // Distribution of the total energy deposit (straggling shape).
@@ -579,10 +998,87 @@ void PlotBragg(const char* h1File)
          nbins, zmin, zmax);
 }
 // ============================================================================
+// Cross-material error-summary table: one row per AnalyzeScan()/
+// analyze_dedx() call in the current ROOT session, so running it once per
+// material (water, then aluminium, then copper, then lead, ...) and calling
+// PrintErrorSummaryTable() at the end (done automatically after each
+// AnalyzeScan() — see below) gives a single consolidated table/CSV instead
+// of having to cross-reference several dedx_summary.csv files by hand.
+// ============================================================================
+struct ErrorSummaryRow
+{
+  std::string material;
+  double eMinMeV = 0., eMaxMeV = 0.;   // ACTUAL range analyzed (after
+                                        // kEMinMeV/kEMaxMeV and available data)
+  long nPoints = 0;                    // sweep points with readable data
+  // Mean of |rel_err_*_pct| over the points where that comparison is
+  // defined (see the gating conditions of each column in AnalyzeScan's CSV
+  // block) — each with its own valid-point count, since the three
+  // comparisons are independently gated.
+  double meanAbsBetheVsTotalPct = 0.;  long nBetheVsTotal = 0;
+  double meanAbsPstarVsTotalPct = 0.;  long nPstarVsTotal = 0;
+  double meanAbsBetheVsPstarPct = 0.;  long nBetheVsPstar = 0;
+};
+static std::vector<ErrorSummaryRow> g_errorSummary;
+// Prints (and (re)writes error_summary.csv with) every ErrorSummaryRow
+// accumulated so far in this ROOT session. Safe to call more than once —
+// it always reflects the full g_errorSummary vector, not just the latest
+// run.
+void PrintErrorSummaryTable()
+{
+  if (g_errorSummary.empty()) {
+    printf("\n[error summary] no runs recorded yet — call "
+           "AnalyzeScan()/analyze_dedx() first\n");
+    return;
+  }
+  printf("\n=== Error summary across %zu analyzed run(s) ===\n",
+         g_errorSummary.size());
+  printf("%-10s %16s %7s  %-20s %-20s %-20s\n", "material", "E range (MeV)",
+         "n_pts", "<|sim-Bethe|> %", "<|sim-PSTAR|> %", "<|Bethe-PSTAR|> %");
+  std::ofstream fout("error_summary.csv");
+  fout << "material,E_min_MeV,E_max_MeV,n_points,"
+          "mean_abs_rel_err_bethe_vs_total_pct,n_bethe_vs_total,"
+          "mean_abs_rel_err_pstar_vs_total_pct,n_pstar_vs_total,"
+          "mean_abs_rel_err_bethe_vs_pstar_pct,n_bethe_vs_pstar\n";
+  for (const ErrorSummaryRow& row : g_errorSummary) {
+    char eRange[32];
+    snprintf(eRange, sizeof(eRange), "%g-%g", row.eMinMeV, row.eMaxMeV);
+    char sBetheTotal[40], sPstarTotal[40], sBethePstar[40];
+    if (row.nBetheVsTotal > 0)
+      snprintf(sBetheTotal, sizeof(sBetheTotal), "%.3f (n=%ld)",
+               row.meanAbsBetheVsTotalPct, row.nBetheVsTotal);
+    else
+      snprintf(sBetheTotal, sizeof(sBetheTotal), "n/a");
+    if (row.nPstarVsTotal > 0)
+      snprintf(sPstarTotal, sizeof(sPstarTotal), "%.3f (n=%ld)",
+               row.meanAbsPstarVsTotalPct, row.nPstarVsTotal);
+    else
+      snprintf(sPstarTotal, sizeof(sPstarTotal), "n/a");
+    if (row.nBetheVsPstar > 0)
+      snprintf(sBethePstar, sizeof(sBethePstar), "%.3f (n=%ld)",
+               row.meanAbsBetheVsPstarPct, row.nBetheVsPstar);
+    else
+      snprintf(sBethePstar, sizeof(sBethePstar), "n/a");
+    printf("%-10s %16s %7ld  %-20s %-20s %-20s\n", row.material.c_str(),
+           eRange, row.nPoints, sBetheTotal, sPstarTotal, sBethePstar);
+    fout << row.material << ',' << row.eMinMeV << ',' << row.eMaxMeV << ','
+         << row.nPoints << ',';
+    if (row.nBetheVsTotal > 0) fout << row.meanAbsBetheVsTotalPct;
+    fout << ',' << row.nBetheVsTotal << ',';
+    if (row.nPstarVsTotal > 0) fout << row.meanAbsPstarVsTotalPct;
+    fout << ',' << row.nPstarVsTotal << ',';
+    if (row.nBetheVsPstar > 0) fout << row.meanAbsBetheVsPstarPct;
+    fout << ',' << row.nBetheVsPstar << '\n';
+  }
+  fout.close();
+  printf("Written: error_summary.csv (%zu material run(s) so far in this "
+         "session)\n", g_errorSummary.size());
+}
+// ============================================================================
 // Full sweep: dE/dx vs E against the uncorrected relativistic Bethe curve,
 // plus the 3D straggling surface across the sweep
 // ============================================================================
-void AnalyzeScan(const char* dataDir = ".")
+void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDir)
 {
   gStyle->SetOptStat(0);
   if (cfg::kEnergiesMeV.empty()) {
@@ -590,19 +1086,51 @@ void AnalyzeScan(const char* dataDir = ".")
            "(read relative to the current directory)\n");
     return;
   }
+  // --- Auto-detect the material and configure cfg::k* accordingly --------
+  const int matIdx = DetectMaterialIndexInDir(dataDir);
+  SetActiveMaterial(matIdx);
+  printf("Detected material: %s (tag '%s'), I = %g(%g) eV, "
+         "Z/A = %.6f(%.6f), rho = %g(%g) g/cm3\n",
+         cfg::kMaterialName, kMaterials[matIdx].tag, cfg::kI_eV,
+         cfg::kDeltaI_eV, cfg::kZoverA, cfg::kDeltaZoverA, cfg::kDensity,
+         cfg::kDeltaDensity);
+  printf("analytic Bethe uncertainty at 100 MeV (sanity check): "
+         "S = %.4f +- %.4f MeV cm2/g (%.2f%% relative)\n\n",
+         BetheNoCorr_Mass_MeVcm2_g(100.0),
+         BetheNoCorr_Mass_Uncertainty_MeVcm2_g(100.0),
+         100. * BetheNoCorr_Mass_Uncertainty_MeVcm2_g(100.0) /
+             BetheNoCorr_Mass_MeVcm2_g(100.0));
+
+  // --- NIST PSTAR reference data for the detected material ----------------
+  // Degrades gracefully: if the file is missing/unreadable, havePstar stays
+  // false and the whole PSTAR comparison (plot curve, ratio series,
+  // dedx_summary.csv columns) is simply left out — not a fatal error.
+  const std::vector<PstarPoint> pstarData =
+      LoadPstarData(pstarDir, kMaterials[matIdx].pstarStem);
+  const bool havePstar = pstarData.size() >= 2;
+  if (havePstar) {
+    printf("PSTAR comparison enabled (%zu points, E in [%g, %g] MeV)\n\n",
+           pstarData.size(), pstarData.front().E_MeV, pstarData.back().E_MeV);
+  } else {
+    printf("PSTAR comparison DISABLED for this run (no usable data for "
+           "'%s' in '%s')\n\n", kMaterials[matIdx].pstarStem, pstarDir);
+  }
+
   // --- Pre-scan: which sweep points actually have data files? -------------
   // Needed to give the straggling TH2 one x bin per available energy.
   std::vector<double> present;
   for (double E : cfg::kEnergiesMeV) {
-    if (E < cfg::kEMinMeV) continue;
+    if (E < cfg::kEMinMeV || E > cfg::kEMaxMeV) continue;
     TString f = TString::Format(cfg::kNtupleFilePattern, dataDir,
-                                EnergyTag(E).Data(), cfg::kCutTag);
+                                kMaterials[matIdx].tag, EnergyTag(E).Data(),
+                                cfg::kCutTag);
     std::ifstream test(f.Data());
     if (test) present.push_back(E);
   }
   if (present.empty()) {
-    printf("No data files found in '%s' — check cfg::kNtupleFilePattern and "
-           "cfg::kCutTag ('%s')\n", dataDir, cfg::kCutTag);
+    printf("No data files found in '%s' for material '%s' — check "
+           "cfg::kNtupleFilePattern and cfg::kCutTag ('%s')\n",
+           dataDir, cfg::kMaterialName, cfg::kCutTag);
     return;
   }
 
@@ -638,7 +1166,8 @@ void AnalyzeScan(const char* dataDir = ".")
   int ix = 0;
   for (double E : present) {
     TString f = TString::Format(cfg::kNtupleFilePattern, dataDir,
-                                EnergyTag(E).Data(), cfg::kCutTag);
+                                kMaterials[matIdx].tag, EnergyTag(E).Data(),
+                                cfg::kCutTag);
     RunData d = LoadNtuple(f.Data());
     RunResult r = AnalyzeRunData(d, E);
     ++ix;
@@ -646,9 +1175,9 @@ void AnalyzeScan(const char* dataDir = ".")
     results.push_back(r);
     if (r.nExit > 0) {
       printf("E = %8g MeV : n = %6ld  dE/dx(restr) = %10.4f  "
-             "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f MeV/cm\n",
+             "dE/dx(total) = %10.4f  Bethe(no corr) = %10.4f +- %.4f MeV/cm\n",
              E, r.n, r.dedxRestricted, r.dedxTotal,
-             BetheNoCorr_Linear_MeV_cm(E));
+             BetheNoCorr_Linear_MeV_cm(E), BetheNoCorr_Linear_Uncertainty_MeV_cm(E));
     } else {
       // No exiting primaries: with the thin-slab rule this should NOT
       // happen in the validation band — flag the run for re-simulation.
@@ -673,6 +1202,18 @@ void AnalyzeScan(const char* dataDir = ".")
   if (results.empty()) {
     printf("No readable data — nothing to analyze\n");
     return;
+  }
+  // --- PSTAR value at each swept energy (log-log interpolated) ------------
+  std::vector<double> pstarS_MeVcm2_g(results.size(), 0.0);
+  std::vector<bool> pstarOk(results.size(), false);
+  if (havePstar) {
+    for (size_t i = 0; i < results.size(); ++i) {
+      double S = 0.;
+      if (InterpolatePstarLogLog(pstarData, results[i].E, S)) {
+        pstarS_MeVcm2_g[i] = S;
+        pstarOk[i] = true;
+      }
+    }
   }
   // --- Graphs ---------------------------------------------------------------
   const int n = (int)results.size();
@@ -706,6 +1247,44 @@ void AnalyzeScan(const char* dataDir = ".")
     const double E = Elo * TMath::Power(Ehi / Elo, (double)i / (nCurve - 1));
     gBB->SetPoint(i, E, BetheNoCorr_Linear_MeV_cm(E));
   }
+  // --- NIST PSTAR: smooth reference curve + second ratio series ------------
+  // The curve is only drawn over the overlap between the plotted range and
+  // PSTAR's own tabulated domain — log-log interpolation is not extended
+  // past NIST's own data (see InterpolatePstarLogLog).
+  TGraph* gPstar = nullptr;
+  TGraphErrors* gRatioPstar = nullptr;
+  if (havePstar) {
+    const double pstarLo = std::max(Elo, pstarData.front().E_MeV);
+    const double pstarHi = std::min(Ehi, pstarData.back().E_MeV);
+    if (pstarLo < pstarHi) {
+      std::vector<double> ex, ey;
+      const int nP = 400;
+      for (int i = 0; i < nP; ++i) {
+        const double E =
+            pstarLo * TMath::Power(pstarHi / pstarLo, (double)i / (nP - 1));
+        double S = 0.;
+        if (InterpolatePstarLogLog(pstarData, E, S)) {
+          ex.push_back(E);
+          ey.push_back(S * cfg::kDensity);  // mass -> linear stopping power
+        }
+      }
+      if (!ex.empty())
+        gPstar = new TGraph((int)ex.size(), ex.data(), ey.data());
+    }
+    gRatioPstar = new TGraphErrors(n);
+    int nRatioP = 0;
+    for (int i = 0; i < n; ++i) {
+      if (results[i].nExit > 0 && pstarOk[i]) {
+        const double pstarLinear = pstarS_MeVcm2_g[i] * cfg::kDensity;
+        gRatioPstar->SetPoint(nRatioP, results[i].E,
+                              results[i].dedxTotal / pstarLinear);
+        gRatioPstar->SetPointError(nRatioP, 0.,
+                                   results[i].dedxTotalErr / pstarLinear);
+        ++nRatioP;
+      }
+    }
+    gRatioPstar->Set(nRatioP);
+  }
   // --- Canvas: main panel + ratio panel ------------------------------------
   TCanvas* c = new TCanvas("cScan", "dE/dx vs E", 900, 800);
   c->Divide(1, 2);
@@ -722,9 +1301,16 @@ void AnalyzeScan(const char* dataDir = ".")
   p1->cd();
   gBB->SetLineColor(kGray + 2);
   gBB->SetLineWidth(2);
-  gBB->SetTitle(Form("Proton stopping power in water (cut: %s);;-dE/dx (MeV/cm)", cfg::kCutTag));
+  gBB->SetTitle(Form("Proton stopping power in %s (cut: %s);;-dE/dx (MeV/cm)",
+                     cfg::kMaterialName, cfg::kCutTag));
   gBB->GetXaxis()->SetLabelSize(0.);
   gBB->Draw("AL");
+  if (gPstar) {
+    gPstar->SetLineColor(kGreen + 2);
+    gPstar->SetLineStyle(2);
+    gPstar->SetLineWidth(2);
+    gPstar->Draw("L same");
+  }
   gTotal->SetMarkerStyle(20);
   gTotal->SetMarkerColor(kAzure + 2);
   gTotal->SetLineColor(kAzure + 2);
@@ -736,11 +1322,12 @@ void AnalyzeScan(const char* dataDir = ".")
   // Top-right corner: above and to the right of a monotonically decreasing
   // curve on log-log axes there is no data, so the legend cannot overlap
   // points or the curve.
-  TLegend* leg = new TLegend(0.47, 0.70, 0.89, 0.89);
+  TLegend* leg = new TLegend(0.44, 0.66, 0.89, 0.89);
   leg->SetBorderSize(0);
   leg->SetFillStyle(0);
-  leg->SetTextSize(0.030);
+  leg->SetTextSize(0.028);
   leg->AddEntry(gBB, "Relativistic Bethe (no corrections)", "l");
+  if (gPstar) leg->AddEntry(gPstar, "NIST PSTAR (total, tabulated)", "l");
   leg->AddEntry(gTotal, "Simulation: (E_{in}-E_{out})/track  (~unrestricted)", "p");
   leg->AddEntry(gRestr, "Simulation: E_{dep,primary}/track  (restricted)", "p");
   leg->Draw();
@@ -748,22 +1335,44 @@ void AnalyzeScan(const char* dataDir = ".")
   gRatio->SetMarkerStyle(20);
   gRatio->SetMarkerColor(kAzure + 2);
   gRatio->SetLineColor(kAzure + 2);
-  gRatio->SetTitle(";proton kinetic energy (MeV);sim(total)/Bethe(no corr)");
+  gRatio->SetTitle(";proton kinetic energy (MeV);sim(total) / reference");
   gRatio->GetXaxis()->SetTitleSize(0.10);
   gRatio->GetXaxis()->SetLabelSize(0.09);
   gRatio->GetYaxis()->SetTitleSize(0.09);
   gRatio->GetYaxis()->SetLabelSize(0.08);
   gRatio->GetYaxis()->SetTitleOffset(0.5);
   // The simulation is expected to sit ABOVE the uncorrected Bethe curve
-  // (missing shell/Barkas/density corrections), increasingly at low energy.
+  // (missing shell/Barkas/density corrections), increasingly at low energy;
+  // the PSTAR ratio (includes those corrections) should sit much closer to
+  // 1 across the whole band — kept on the SAME 0.9-1.15 range so the two
+  // series are visually comparable rather than each on its own scale.
   gRatio->GetYaxis()->SetRangeUser(0.9, 1.15);
   gRatio->Draw("AP");
+  if (gRatioPstar && gRatioPstar->GetN() > 0) {
+    gRatioPstar->SetMarkerStyle(21);
+    gRatioPstar->SetMarkerColor(kGreen + 2);
+    gRatioPstar->SetLineColor(kGreen + 2);
+    gRatioPstar->Draw("P same");
+  }
   TGraph* gUnity = new TGraph(2);
   gUnity->SetPoint(0, Elo, 1.0);
   gUnity->SetPoint(1, Ehi, 1.0);
   gUnity->SetLineColor(kGray + 1);
   gUnity->SetLineStyle(2);
   gUnity->Draw("L same");
+  if (gRatioPstar && gRatioPstar->GetN() > 0) {
+    // Compact legend in the ratio pad only when there are two series to
+    // distinguish; a single azure series is unambiguous on its own (as
+    // before this feature) and doesn't need one.
+    TLegend* legRatio = new TLegend(0.12, 0.78, 0.55, 0.95);
+    legRatio->SetBorderSize(0);
+    legRatio->SetFillStyle(0);
+    legRatio->SetTextSize(0.075);
+    legRatio->SetNColumns(2);
+    legRatio->AddEntry(gRatio, "vs Bethe", "p");
+    legRatio->AddEntry(gRatioPstar, "vs PSTAR", "p");
+    legRatio->Draw();
+  }
   c->SaveAs("dedx_vs_energy.png");
   c->SaveAs("dedx_vs_energy.pdf");
 
@@ -815,29 +1424,112 @@ void AnalyzeScan(const char* dataDir = ".")
   // depends on the production cut). Positive at low energy (missing
   // shell/Barkas corrections), ~0 at 100-1000 MeV, negative at high energy
   // (missing density effect). Empty where the total estimator is undefined.
+  //
+  // UNCERTAINTIES: bethe_no_corr_err_MeV_cm / S_bethe_no_corr_err_MeV_cm2_g
+  // are the ANALYTIC propagated uncertainty on the Bethe reference itself
+  // (BetheNoCorr_*_Uncertainty_*, same formula/sources as
+  // analytic_solution.ipynb: K, Z/A, m_e, I, +rho for the linear form — NOT
+  // a statistical error, since the analytic curve has no "events").
+  // rel_err_bethe_vs_total_pct_err combines that analytic uncertainty with
+  // the simulation's own statistical error (dedx_total_err_MeV_cm) via the
+  // standard uncorrelated propagation formula (RelErrPctUncertainty above).
+  // Both are empty where the total estimator is undefined (n_exit == 0).
+  //
+  // PSTAR COLUMNS: pstar_S_total_MeV_cm2_g / pstar_dedx_total_MeV_cm are the
+  // NIST PSTAR "total" (electronic + nuclear) stopping power, log-log
+  // interpolated to this run's energy (InterpolatePstarLogLog). Unlike the
+  // Bethe columns, PSTAR carries no published uncertainty, so
+  // rel_err_pstar_vs_total_pct_err propagates ONLY the simulation's own
+  // statistical error (RelErrPctUncertaintyStatOnly) — treat S_pstar as
+  // exact, not as having the same error character as bethe_no_corr's.
+  // Empty when the total estimator is undefined (n_exit == 0) OR PSTAR data
+  // is unavailable/out of range for this energy/material.
+  //
+  // THEORY VS NIST: bethe_vs_pstar_pct / bethe_vs_pstar_pct_err compare the
+  // analytic Bethe curve DIRECTLY against NIST PSTAR (total), with NO
+  // dependence on the simulation at all — unlike every other rel_err_*
+  // column above, these are defined whenever PSTAR has data at this energy,
+  // even for rows where n_exit == 0. Reference (denominator) is PSTAR, so
+  // rel_err = 100*(S_bethe - S_pstar)/S_pstar; the propagated uncertainty
+  // again uses RelErrPctUncertaintyStatOnly, this time correctly (the
+  // "stat-only" side is bethe_no_corr's own analytic uncertainty, S_pstar
+  // still treated as exact since NIST publishes none).
   std::ofstream out("dedx_summary.csv");
-  out << "E_MeV,n_events,n_exit,"
+  out << "material,E_MeV,n_events,n_exit,"
          "dedx_restricted_MeV_cm,dedx_restricted_err_MeV_cm,"
          "S_restricted_MeV_cm2_g,"
          "dedx_total_MeV_cm,dedx_total_err_MeV_cm,S_total_MeV_cm2_g,"
-         "bethe_no_corr_MeV_cm,S_bethe_no_corr_MeV_cm2_g,"
-         "rel_err_bethe_vs_total_pct,"
+         "bethe_no_corr_MeV_cm,bethe_no_corr_err_MeV_cm,"
+         "S_bethe_no_corr_MeV_cm2_g,S_bethe_no_corr_err_MeV_cm2_g,"
+         "rel_err_bethe_vs_total_pct,rel_err_bethe_vs_total_pct_err,"
+         "pstar_S_total_MeV_cm2_g,pstar_dedx_total_MeV_cm,"
+         "rel_err_pstar_vs_total_pct,rel_err_pstar_vs_total_pct_err,"
+         "rel_err_bethe_vs_pstar_pct,rel_err_bethe_vs_pstar_pct_err,"
          "straggling_rms_MeV,balance_residual_MeV\n";
-  for (const RunResult& r : results) {
+  // Accumulators for the final cross-material error-summary table (see
+  // ErrorSummaryRow / PrintErrorSummaryTable below): mean ABSOLUTE percent
+  // deviation for each of the three comparisons, each with its own valid
+  // count (the three are independently gated: sim-vs-Bethe needs
+  // n_exit > 0; sim-vs-PSTAR needs n_exit > 0 AND PSTAR coverage;
+  // Bethe-vs-PSTAR only needs PSTAR coverage).
+  double sumAbsBetheVsTotal = 0.; long nAbsBetheVsTotal = 0;
+  double sumAbsPstarVsTotal = 0.; long nAbsPstarVsTotal = 0;
+  double sumAbsBetheVsPstar = 0.; long nAbsBetheVsPstar = 0;
+  for (size_t i = 0; i < results.size(); ++i) {
+    const RunResult& r = results[i];
     const double betheLin = BetheNoCorr_Linear_MeV_cm(r.E);
-    out << r.E << ',' << r.n << ',' << r.nExit << ','
+    const double betheLinErr = BetheNoCorr_Linear_Uncertainty_MeV_cm(r.E);
+    const double betheMass = BetheNoCorr_Mass_MeVcm2_g(r.E);
+    const double betheMassErr = BetheNoCorr_Mass_Uncertainty_MeVcm2_g(r.E);
+    out << cfg::kMaterialName << ',' << r.E << ',' << r.n << ',' << r.nExit << ','
         << r.dedxRestricted << ',' << r.dedxRestrictedErr << ','
         << r.dedxRestricted / cfg::kDensity << ',';
     if (r.nExit > 0) {
       const double relErrPct = 100. * (r.dedxTotal - betheLin) / betheLin;
+      const double relErrPctErr = RelErrPctUncertainty(
+          r.dedxTotal, r.dedxTotalErr, betheLin, betheLinErr);
       out << r.dedxTotal << ',' << r.dedxTotalErr << ','
           << r.dedxTotal / cfg::kDensity << ','
-          << betheLin << ',' << BetheNoCorr_Mass_MeVcm2_g(r.E) << ','
-          << relErrPct << ',';
+          << betheLin << ',' << betheLinErr << ','
+          << betheMass << ',' << betheMassErr << ','
+          << relErrPct << ',' << relErrPctErr << ',';
+      sumAbsBetheVsTotal += std::fabs(relErrPct);
+      ++nAbsBetheVsTotal;
     } else {
-      // Primary never exits: total estimator and its comparison undefined.
-      out << ",,," << betheLin << ',' << BetheNoCorr_Mass_MeVcm2_g(r.E)
-          << ",,";
+      // Primary never exits: total estimator and every comparison against
+      // it (Bethe's rel_err columns AND the sim-vs-PSTAR columns below) are
+      // undefined (the analytic Bethe value and its own uncertainty are
+      // still reported — they don't depend on the simulation). FIVE empty
+      // fields here: dedx_total, dedx_total_err, S_total,
+      // rel_err_bethe_vs_total_pct, rel_err_bethe_vs_total_pct_err.
+      out << ",,," << betheLin << ',' << betheLinErr << ','
+          << betheMass << ',' << betheMassErr << ",,,";
+    }
+    if (r.nExit > 0 && pstarOk[i]) {
+      const double pstarMass = pstarS_MeVcm2_g[i];
+      const double pstarLin = pstarMass * cfg::kDensity;
+      const double relErrPstarPct = 100. * (r.dedxTotal - pstarLin) / pstarLin;
+      const double relErrPstarPctErr =
+          RelErrPctUncertaintyStatOnly(r.dedxTotal, r.dedxTotalErr, pstarLin);
+      out << pstarMass << ',' << pstarLin << ','
+          << relErrPstarPct << ',' << relErrPstarPctErr << ',';
+      sumAbsPstarVsTotal += std::fabs(relErrPstarPct);
+      ++nAbsPstarVsTotal;
+    } else {
+      out << ",,,,";
+    }
+    if (pstarOk[i]) {
+      // Theory vs NIST: no simulation involved, so this is available
+      // whenever PSTAR has data here, regardless of n_exit.
+      const double pstarMass = pstarS_MeVcm2_g[i];
+      const double relErrBethePstarPct = 100. * (betheMass - pstarMass) / pstarMass;
+      const double relErrBethePstarPctErr =
+          RelErrPctUncertaintyStatOnly(betheMass, betheMassErr, pstarMass);
+      out << relErrBethePstarPct << ',' << relErrBethePstarPctErr << ',';
+      sumAbsBetheVsPstar += std::fabs(relErrBethePstarPct);
+      ++nAbsBetheVsPstar;
+    } else {
+      out << ",,";
     }
     out << r.stragglingRms << ',' << r.balanceResidual << '\n';
   }
@@ -846,17 +1538,44 @@ void AnalyzeScan(const char* dataDir = ".")
          "straggling_map.png and dedx_summary.csv "
          "(%d of %zu grid points had data)\n",
          n, cfg::kEnergiesMeV.size());
+
+  // --- Record this run in the cross-material error-summary table ----------
+  ErrorSummaryRow row;
+  row.material = cfg::kMaterialName;
+  row.eMinMeV = results.front().E;   // ACTUAL range analyzed: after
+  row.eMaxMeV = results.back().E;    // kEMinMeV/kEMaxMeV and available data,
+  row.nPoints = (long)results.size();  // not the raw kEnergiesMeV grid.
+  row.meanAbsBetheVsTotalPct =
+      (nAbsBetheVsTotal > 0) ? sumAbsBetheVsTotal / nAbsBetheVsTotal : 0.;
+  row.nBetheVsTotal = nAbsBetheVsTotal;
+  row.meanAbsPstarVsTotalPct =
+      (nAbsPstarVsTotal > 0) ? sumAbsPstarVsTotal / nAbsPstarVsTotal : 0.;
+  row.nPstarVsTotal = nAbsPstarVsTotal;
+  row.meanAbsBetheVsPstarPct =
+      (nAbsBetheVsPstar > 0) ? sumAbsBetheVsPstar / nAbsBetheVsPstar : 0.;
+  row.nBetheVsPstar = nAbsBetheVsPstar;
+  g_errorSummary.push_back(row);
+  // Reprints the FULL accumulated table (all materials analyzed so far in
+  // this session), not just this run — see PrintErrorSummaryTable() above.
+  PrintErrorSummaryTable();
 }
 // ============================================================================
 // Entry point:  root -l -b -q analyze_dedx.C
 // ============================================================================
-void analyze_dedx(const char* dataDir = ".")
+void analyze_dedx(const char* dataDir = ".",
+                  const char* pstarDir = cfg::kPstarDir)
 {
   printf("=== slab Bethe validation analysis (relativistic Bethe, "
-         "no corrections) ===\n");
-  printf("cut tag = %s, I = %g eV, Z/A = %.6f, rho = %g g/cm3, "
-         "thin-slab rule (t <= %g mm), E >= %g MeV, grid points = %zu\n\n",
-         cfg::kCutTag, cfg::kI_eV, cfg::kZoverA, cfg::kDensity,
-         cfg::kThicknessMaxMM, cfg::kEMinMeV, cfg::kEnergiesMeV.size());
-  AnalyzeScan(dataDir);
+         "no corrections, + NIST PSTAR) ===\n");
+  printf("cut tag = %s, thin-slab rule (t <= %g mm), %g <= E <= %g MeV, "
+         "grid points = %zu\n", cfg::kCutTag, cfg::kThicknessMaxMM,
+         cfg::kEMinMeV, cfg::kEMaxMeV, cfg::kEnergiesMeV.size());
+  printf("(material is auto-detected from the data files in '%s'; "
+         "NIST PSTAR data read from '%s' — see below)\n\n", dataDir, pstarDir);
+  // AnalyzeScan() detects the material (water/aluminium/copper/lead) from
+  // the file names present in dataDir, configures cfg::kZoverA/kI_eV/
+  // kDensity accordingly, loads the matching NIST PSTAR table from
+  // pstarDir (degrading gracefully if not found), and prints the detected
+  // material + its analytic Bethe sanity check before doing anything else.
+  AnalyzeScan(dataDir, pstarDir);
 }
