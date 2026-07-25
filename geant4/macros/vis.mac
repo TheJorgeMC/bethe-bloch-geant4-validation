@@ -13,6 +13,14 @@
 /absorber/sizeXY 10 cm
 /absorber/numberOfLayers 10
 
+# --- Enable the decorative logos --------------------------------------------
+# Must come BEFORE /run/initialize: DetectorConstruction::Construct() reads
+# fShowLogos once, at geometry-build time, to size the World and place the
+# three logo groups (see DetectorConstruction.cc). It has NO effect on the
+# physics results (dE/dx, range, energy balance) — see the comment block
+# above PlaceLogos() in DetectorConstruction.cc for why.
+/detector/showLogos true
+
 # --- Delta-ray production cut (AbsorberRegion) --------------------------
 # 1 mm in water ~ 350 keV electron threshold: sets the T_cut of the
 # RESTRICTED dE/dx reported by the continuous process (design, section 5).
@@ -41,13 +49,27 @@
 /vis/modeling/trajectories/drawByCharge-0/set -1 red
 /vis/modeling/trajectories/select drawByCharge-0
 
-# Accumulate 20 events on screen
-/vis/scene/endOfEventAction accumulate 20
+# Accumulate 30 events on screen
+/vis/scene/endOfEventAction accumulate 30
 
 /vis/viewer/set/autoRefresh true
 /vis/verbose warnings
 
-# --- Example: 20 protons of 150 MeV for visual inspection ---------------
+# --- vis.mac tail: make sure the logos render as solid plaques ----------
+/vis/viewer/set/style surface
+/vis/viewer/set/hiddenMarker true
+/vis/viewer/set/auxiliaryEdge true
+/vis/viewer/set/autoRefresh true
+/vis/scene/notifyHandlers
+
+# The logos sit downstream of the slab along +z (see DetectorConstruction.cc
+# for the exact z's, printed to the console at construction time as
+# "### DetectorConstruction: decorative logos placed at z = ..."). To frame
+# just the logos instead of the whole (now slightly larger) World:
+# /vis/viewer/zoomTo 3
+# /vis/viewer/set/targetPoint 0 0 3 cm
+
+# --- Example: 30 protons of 150 MeV for visual inspection ---------------
 /gun/particle proton
 /gun/energy 150 MeV
-/run/beamOn 20
+/run/beamOn 30

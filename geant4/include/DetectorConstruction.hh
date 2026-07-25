@@ -32,6 +32,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction
   void SetThickness(G4double value);
   void SetSizeXY(G4double value);
   void SetNumberOfLayers(G4int n);
+  void SetShowLogos(G4bool value);
 
   // --- Getters used by PrimaryGeneratorAction, RunAction and Stepping ---
   G4Material* GetAbsorberMaterial() const { return fAbsorberMaterial; }
@@ -57,6 +58,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction
   G4double fThickness;       // total slab thickness along z
   G4double fSizeXY;          // side of the (square) transverse cross section
   G4int fNumberOfLayers;     // 1 = single slab; N>1 = replicated along z
+  G4bool fShowLogos = false;
 
   // --- Volumes and region ---
   G4LogicalVolume* fWorldLV = nullptr;
