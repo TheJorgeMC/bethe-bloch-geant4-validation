@@ -93,8 +93,8 @@
 // analyzed (material detection, the sweep loop, dedx_summary.csv rows, and
 // the error-summary table's reported range) WITHOUT touching kEnergiesMeV/
 // energy_grid.csv itself — e.g. set kEMaxMeV = 300.0 to restrict everything
-// to the clinical 3-300 MeV band. kEMaxMeV can be set to effectively have "no
-// upper limit" so existing behavior is unchanged unless edited with a value of 1.0e9.
+// to the clinical 3-300 MeV band. kEMaxMeV defaults to effectively "no
+// upper limit" so existing behavior is unchanged unless edited.
 //
 // ERROR SUMMARY TABLE: every AnalyzeScan()/analyze_dedx() call appends one
 // row (material, ACTUAL energy range analyzed, mean |rel. error| for each
@@ -119,6 +119,17 @@
 //     AnalyzeScan("data_cu");    AnalyzeScan("data_pb");
 //     PrintErrorSummaryTable();  // (also auto-printed after each call above)
 //
+// OUTPUT DIRECTORY: every file this macro writes (dedx_summary.csv, the
+// PNG/PDF plots, error_summary.csv) goes into "<base>_output/", where
+// <base> is the last path component of the data directory being analyzed
+// (dataDir for AnalyzeScan()/analyze_dedx(); the directory of the given
+// file for standalone AnalyzeRun()/PlotBragg() calls) — e.g. data in
+// "path/to/data" writes outputs to "path/to/data_output/" (created
+// automatically if missing, see EnsureOutputDir() below). This keeps a
+// directory of raw Geant4 CSVs from being cluttered with analysis output,
+// and keeps outputs from different materials/directories in separate
+// folders even when run from the same working directory.
+//
 // The configuration block below (energy grid CSV, cut tag, thickness,
 // energy range, PSTAR directory) must match the macros/data layout used to
 // produce the data; the material-specific constants (Z/A, I, rho) are set
@@ -139,6 +150,7 @@
 #include "TGaxis.h"
 #include "TMath.h"
 #include "TPad.h"
+#include "TSystem.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -185,6 +197,37 @@ static TString EnergyTag(double E_MeV)
   TString t = TString::Format("%g", E_MeV);
   t.ReplaceAll(".", "p");
   return t;
+}
+// ============================================================================
+// Output directory helpers — see the OUTPUT DIRECTORY note in the header
+// comment above.
+// ============================================================================
+// Directory portion of a file path ("a/b/c.csv" -> "a/b"; no slash -> ".").
+static std::string DirOf(const std::string& path)
+{
+  const size_t slash = path.find_last_of('/');
+  return (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
+}
+// Last path component of a directory, stripped of trailing slashes
+// ("path/to/data/" -> "data"; "." or ".." or empty -> the fallback "data",
+// since "._output"/".._output" would be a confusing folder name).
+static std::string BaseNameOf(const std::string& dir)
+{
+  std::string d = dir;
+  while (d.size() > 1 && d.back() == '/') d.pop_back();
+  const size_t slash = d.find_last_of('/');
+  std::string base = (slash == std::string::npos) ? d : d.substr(slash + 1);
+  if (base.empty() || base == "." || base == "..") base = "data";
+  return base;
+}
+// Computes "<basename(dataDir)>_output", creates it (recursively, no error
+// if it already exists) via gSystem->mkdir(), and returns the path every
+// output file should be written under.
+static std::string EnsureOutputDir(const std::string& dataDir)
+{
+  const std::string outDir = BaseNameOf(dataDir) + "_output";
+  gSystem->mkdir(outDir.c_str(), true);
+  return outDir;
 }
 namespace cfg
 {
@@ -778,6 +821,7 @@ void AnalyzeRun(const char* csvFile, double Enominal)
            "(expected a 'dedx_<materialTag>_...' file name) — keeping the "
            "currently active material (%s)\n", csvFile, cfg::kMaterialName);
   }
+  const std::string outDir = EnsureOutputDir(DirOf(csvFile));
   RunData d = LoadNtuple(csvFile);
   if (!d.ok) return;
   RunResult r = AnalyzeRunData(d, Enominal);
@@ -935,7 +979,7 @@ void AnalyzeRun(const char* csvFile, double Enominal)
   pav->Draw();
 
   // 'p'-encoded tag in the output name too, for consistent sorting/globbing.
-  c->SaveAs(Form("edep_distribution_%sMeV.png", tag.Data()));
+  c->SaveAs(Form("%s/edep_distribution_%sMeV.png", outDir.c_str(), tag.Data()));
 }
 // ============================================================================
 // Depth-dose (Bragg) curve from the Geant4 CSV histogram file
@@ -945,6 +989,7 @@ void AnalyzeRun(const char* csvFile, double Enominal)
 // ============================================================================
 void PlotBragg(const char* h1File)
 {
+  const std::string outDir = EnsureOutputDir(DirOf(h1File));
   std::ifstream in(h1File);
   if (!in) {
     printf("[warning] cannot open %s — Bragg plot skipped\n", h1File);
@@ -993,9 +1038,10 @@ void PlotBragg(const char* h1File)
   h->SetLineWidth(2);
   h->SetStats(false);
   h->Draw("hist");
-  c->SaveAs("bragg_curve.png");
-  printf("Bragg curve written to bragg_curve.png (%d bins, z in [%g, %g] mm)\n",
-         nbins, zmin, zmax);
+  const std::string braggPath = outDir + "/bragg_curve.png";
+  c->SaveAs(braggPath.c_str());
+  printf("Bragg curve written to %s (%d bins, z in [%g, %g] mm)\n",
+         braggPath.c_str(), nbins, zmin, zmax);
 }
 // ============================================================================
 // Cross-material error-summary table: one row per AnalyzeScan()/
@@ -1014,65 +1060,81 @@ struct ErrorSummaryRow
   // Mean of |rel_err_*_pct| over the points where that comparison is
   // defined (see the gating conditions of each column in AnalyzeScan's CSV
   // block) — each with its own valid-point count, since the three
-  // comparisons are independently gated.
-  double meanAbsBetheVsTotalPct = 0.;  long nBetheVsTotal = 0;
-  double meanAbsPstarVsTotalPct = 0.;  long nPstarVsTotal = 0;
-  double meanAbsBetheVsPstarPct = 0.;  long nBetheVsPstar = 0;
+  // comparisons are independently gated. Naming spells out WHICH TWO
+  // quantities are being compared, to avoid the ambiguity of the earlier
+  // "vs total"/"vs Bethe" names (which "total" — simulation's or NIST's?):
+  //   Geant4  = this project's Geant4 simulation (total/~unrestricted
+  //             estimator, dedx_total_MeV_cm in dedx_summary.csv)
+  //   Teoria  = the pure relativistic Bethe formula, NO corrections,
+  //             evaluated analytically in this macro (bethe_no_corr_*)
+  //   NIST    = the tabulated NIST PSTAR "total" stopping power
+  //             (pstar_*_MeV_cm2_g in dedx_summary.csv)
+  double meanAbsGeant4VsTeoriaPct = 0.;  long nGeant4VsTeoria = 0;
+  double meanAbsGeant4VsNistPct = 0.;    long nGeant4VsNist = 0;
+  double meanAbsTeoriaVsNistPct = 0.;    long nTeoriaVsNist = 0;
 };
 static std::vector<ErrorSummaryRow> g_errorSummary;
-// Prints (and (re)writes error_summary.csv with) every ErrorSummaryRow
-// accumulated so far in this ROOT session. Safe to call more than once —
-// it always reflects the full g_errorSummary vector, not just the latest
-// run.
-void PrintErrorSummaryTable()
+// Prints (and writes "<outDir>/error_summary.csv" with) every
+// ErrorSummaryRow accumulated so far in this ROOT session. Safe to call
+// more than once — it always reflects the full g_errorSummary vector, not
+// just the latest run; outDir only controls WHERE the (full, cumulative)
+// CSV is (re)written each time — see the OUTPUT DIRECTORY note in the
+// header comment.
+void PrintErrorSummaryTable(const std::string& outDir = ".")
 {
   if (g_errorSummary.empty()) {
     printf("\n[error summary] no runs recorded yet — call "
            "AnalyzeScan()/analyze_dedx() first\n");
     return;
   }
-  printf("\n=== Error summary across %zu analyzed run(s) ===\n",
+  printf("\n=== Error summary across %zu analyzed run(s) ===\n"
+         "    Geant4 = this project's Geant4 simulation (total estimator)\n"
+         "    Teoria = pure relativistic Bethe formula (no corrections, "
+         "analytic)\n"
+         "    NIST   = NIST PSTAR tabulated data (total stopping power)\n\n",
          g_errorSummary.size());
-  printf("%-10s %16s %7s  %-20s %-20s %-20s\n", "material", "E range (MeV)",
-         "n_pts", "<|sim-Bethe|> %", "<|sim-PSTAR|> %", "<|Bethe-PSTAR|> %");
-  std::ofstream fout("error_summary.csv");
+  printf("%-10s %16s %7s  %-22s %-22s %-22s\n", "material", "E range (MeV)",
+         "n_pts", "<|Geant4-Teoria|> %", "<|Geant4-NIST|> %",
+         "<|Teoria-NIST|> %");
+  const std::string csvPath = outDir + "/error_summary.csv";
+  std::ofstream fout(csvPath);
   fout << "material,E_min_MeV,E_max_MeV,n_points,"
-          "mean_abs_rel_err_bethe_vs_total_pct,n_bethe_vs_total,"
-          "mean_abs_rel_err_pstar_vs_total_pct,n_pstar_vs_total,"
-          "mean_abs_rel_err_bethe_vs_pstar_pct,n_bethe_vs_pstar\n";
+          "mean_abs_rel_err_geant4_vs_teoria_pct,n_geant4_vs_teoria,"
+          "mean_abs_rel_err_geant4_vs_nist_pct,n_geant4_vs_nist,"
+          "mean_abs_rel_err_teoria_vs_nist_pct,n_teoria_vs_nist\n";
   for (const ErrorSummaryRow& row : g_errorSummary) {
     char eRange[32];
     snprintf(eRange, sizeof(eRange), "%g-%g", row.eMinMeV, row.eMaxMeV);
-    char sBetheTotal[40], sPstarTotal[40], sBethePstar[40];
-    if (row.nBetheVsTotal > 0)
-      snprintf(sBetheTotal, sizeof(sBetheTotal), "%.3f (n=%ld)",
-               row.meanAbsBetheVsTotalPct, row.nBetheVsTotal);
+    char sG4Teoria[40], sG4Nist[40], sTeoriaNist[40];
+    if (row.nGeant4VsTeoria > 0)
+      snprintf(sG4Teoria, sizeof(sG4Teoria), "%.3f (n=%ld)",
+               row.meanAbsGeant4VsTeoriaPct, row.nGeant4VsTeoria);
     else
-      snprintf(sBetheTotal, sizeof(sBetheTotal), "n/a");
-    if (row.nPstarVsTotal > 0)
-      snprintf(sPstarTotal, sizeof(sPstarTotal), "%.3f (n=%ld)",
-               row.meanAbsPstarVsTotalPct, row.nPstarVsTotal);
+      snprintf(sG4Teoria, sizeof(sG4Teoria), "n/a");
+    if (row.nGeant4VsNist > 0)
+      snprintf(sG4Nist, sizeof(sG4Nist), "%.3f (n=%ld)",
+               row.meanAbsGeant4VsNistPct, row.nGeant4VsNist);
     else
-      snprintf(sPstarTotal, sizeof(sPstarTotal), "n/a");
-    if (row.nBetheVsPstar > 0)
-      snprintf(sBethePstar, sizeof(sBethePstar), "%.3f (n=%ld)",
-               row.meanAbsBetheVsPstarPct, row.nBetheVsPstar);
+      snprintf(sG4Nist, sizeof(sG4Nist), "n/a");
+    if (row.nTeoriaVsNist > 0)
+      snprintf(sTeoriaNist, sizeof(sTeoriaNist), "%.3f (n=%ld)",
+               row.meanAbsTeoriaVsNistPct, row.nTeoriaVsNist);
     else
-      snprintf(sBethePstar, sizeof(sBethePstar), "n/a");
-    printf("%-10s %16s %7ld  %-20s %-20s %-20s\n", row.material.c_str(),
-           eRange, row.nPoints, sBetheTotal, sPstarTotal, sBethePstar);
+      snprintf(sTeoriaNist, sizeof(sTeoriaNist), "n/a");
+    printf("%-10s %16s %7ld  %-22s %-22s %-22s\n", row.material.c_str(),
+           eRange, row.nPoints, sG4Teoria, sG4Nist, sTeoriaNist);
     fout << row.material << ',' << row.eMinMeV << ',' << row.eMaxMeV << ','
          << row.nPoints << ',';
-    if (row.nBetheVsTotal > 0) fout << row.meanAbsBetheVsTotalPct;
-    fout << ',' << row.nBetheVsTotal << ',';
-    if (row.nPstarVsTotal > 0) fout << row.meanAbsPstarVsTotalPct;
-    fout << ',' << row.nPstarVsTotal << ',';
-    if (row.nBetheVsPstar > 0) fout << row.meanAbsBetheVsPstarPct;
-    fout << ',' << row.nBetheVsPstar << '\n';
+    if (row.nGeant4VsTeoria > 0) fout << row.meanAbsGeant4VsTeoriaPct;
+    fout << ',' << row.nGeant4VsTeoria << ',';
+    if (row.nGeant4VsNist > 0) fout << row.meanAbsGeant4VsNistPct;
+    fout << ',' << row.nGeant4VsNist << ',';
+    if (row.nTeoriaVsNist > 0) fout << row.meanAbsTeoriaVsNistPct;
+    fout << ',' << row.nTeoriaVsNist << '\n';
   }
   fout.close();
-  printf("Written: error_summary.csv (%zu material run(s) so far in this "
-         "session)\n", g_errorSummary.size());
+  printf("Written: %s (%zu material run(s) so far in this session)\n",
+         csvPath.c_str(), g_errorSummary.size());
 }
 // ============================================================================
 // Full sweep: dE/dx vs E against the uncorrected relativistic Bethe curve,
@@ -1086,6 +1148,11 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
            "(read relative to the current directory)\n");
     return;
   }
+  // --- Output directory: "<basename(dataDir)>_output/" (see the OUTPUT
+  // DIRECTORY note in the header comment) — created up front so every
+  // output below (plots, dedx_summary.csv, error_summary.csv) lands there.
+  const std::string outDir = EnsureOutputDir(dataDir);
+  printf("Output directory: %s\n", outDir.c_str());
   // --- Auto-detect the material and configure cfg::k* accordingly --------
   const int matIdx = DetectMaterialIndexInDir(dataDir);
   SetActiveMaterial(matIdx);
@@ -1285,6 +1352,31 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
     }
     gRatioPstar->Set(nRatioP);
   }
+  // --- Teoria vs NIST: smooth ratio curve, NO simulation involved ----------
+  // Bethe/PSTAR at every energy across the PSTAR-covered part of the plotted
+  // range — deterministic (no error bars), so a plain TGraph line rather
+  // than TGraphErrors markers, consistent with how gBB/gPstar themselves
+  // are drawn as smooth curves rather than per-point markers.
+  TGraph* gRatioBethePstar = nullptr;
+  if (havePstar) {
+    const double pstarLo = std::max(Elo, pstarData.front().E_MeV);
+    const double pstarHi = std::min(Ehi, pstarData.back().E_MeV);
+    if (pstarLo < pstarHi) {
+      std::vector<double> rx, ry;
+      const int nR = 400;
+      for (int i = 0; i < nR; ++i) {
+        const double E =
+            pstarLo * TMath::Power(pstarHi / pstarLo, (double)i / (nR - 1));
+        double Spstar = 0.;
+        if (InterpolatePstarLogLog(pstarData, E, Spstar)) {
+          rx.push_back(E);
+          ry.push_back(BetheNoCorr_Mass_MeVcm2_g(E) / Spstar);
+        }
+      }
+      if (!rx.empty())
+        gRatioBethePstar = new TGraph((int)rx.size(), rx.data(), ry.data());
+    }
+  }
   // --- Canvas: main panel + ratio panel ------------------------------------
   TCanvas* c = new TCanvas("cScan", "dE/dx vs E", 900, 800);
   c->Divide(1, 2);
@@ -1335,7 +1427,7 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   gRatio->SetMarkerStyle(20);
   gRatio->SetMarkerColor(kAzure + 2);
   gRatio->SetLineColor(kAzure + 2);
-  gRatio->SetTitle(";proton kinetic energy (MeV);sim(total) / reference");
+  gRatio->SetTitle(";proton kinetic energy (MeV);ratio to reference");
   gRatio->GetXaxis()->SetTitleSize(0.10);
   gRatio->GetXaxis()->SetLabelSize(0.09);
   gRatio->GetYaxis()->SetTitleSize(0.09);
@@ -1343,9 +1435,10 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   gRatio->GetYaxis()->SetTitleOffset(0.5);
   // The simulation is expected to sit ABOVE the uncorrected Bethe curve
   // (missing shell/Barkas/density corrections), increasingly at low energy;
-  // the PSTAR ratio (includes those corrections) should sit much closer to
-  // 1 across the whole band — kept on the SAME 0.9-1.15 range so the two
-  // series are visually comparable rather than each on its own scale.
+  // the PSTAR ratios (Geant4/PSTAR and Bethe/PSTAR both include/reflect
+  // those corrections) should sit much closer to 1 across the whole band —
+  // kept on the SAME 0.9-1.15 range so all series are visually comparable
+  // rather than each on its own scale.
   gRatio->GetYaxis()->SetRangeUser(0.9, 1.15);
   gRatio->Draw("AP");
   if (gRatioPstar && gRatioPstar->GetN() > 0) {
@@ -1354,27 +1447,39 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
     gRatioPstar->SetLineColor(kGreen + 2);
     gRatioPstar->Draw("P same");
   }
+  if (gRatioBethePstar) {
+    // Teoria vs NIST: drawn as a smooth GRAY DASHED LINE (matches gBB's
+    // color in the main panel) rather than markers, since it's a
+    // deterministic curve with no simulation/statistical error attached —
+    // visually distinct from the two marker-based sim comparisons above.
+    gRatioBethePstar->SetLineColor(kGray + 2);
+    gRatioBethePstar->SetLineStyle(2);
+    gRatioBethePstar->SetLineWidth(2);
+    gRatioBethePstar->Draw("L same");
+  }
   TGraph* gUnity = new TGraph(2);
   gUnity->SetPoint(0, Elo, 1.0);
   gUnity->SetPoint(1, Ehi, 1.0);
   gUnity->SetLineColor(kGray + 1);
   gUnity->SetLineStyle(2);
   gUnity->Draw("L same");
-  if (gRatioPstar && gRatioPstar->GetN() > 0) {
-    // Compact legend in the ratio pad only when there are two series to
-    // distinguish; a single azure series is unambiguous on its own (as
-    // before this feature) and doesn't need one.
-    TLegend* legRatio = new TLegend(0.12, 0.78, 0.55, 0.95);
+  if ((gRatioPstar && gRatioPstar->GetN() > 0) || gRatioBethePstar) {
+    // Compact legend in the ratio pad only when there is more than the one
+    // (always-present) Geant4-vs-Teoria series to distinguish.
+    TLegend* legRatio = new TLegend(0.12, 0.76, 0.68, 0.95);
     legRatio->SetBorderSize(0);
     legRatio->SetFillStyle(0);
-    legRatio->SetTextSize(0.075);
-    legRatio->SetNColumns(2);
-    legRatio->AddEntry(gRatio, "vs Bethe", "p");
-    legRatio->AddEntry(gRatioPstar, "vs PSTAR", "p");
+    legRatio->SetTextSize(0.070);
+    legRatio->SetNColumns(3);
+    legRatio->AddEntry(gRatio, "Geant4/Teoria", "p");
+    if (gRatioPstar && gRatioPstar->GetN() > 0)
+      legRatio->AddEntry(gRatioPstar, "Geant4/NIST", "p");
+    if (gRatioBethePstar)
+      legRatio->AddEntry(gRatioBethePstar, "Teoria/NIST", "l");
     legRatio->Draw();
   }
-  c->SaveAs("dedx_vs_energy.png");
-  c->SaveAs("dedx_vs_energy.pdf");
+  c->SaveAs((outDir + "/dedx_vs_energy.png").c_str());
+  c->SaveAs((outDir + "/dedx_vs_energy.pdf").c_str());
 
   // --- 3D straggling surface ------------------------------------------------
   // Generous margins so the palette, the z-axis title and the axis labels
@@ -1393,7 +1498,7 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   hStrag->SetTitleOffset(2.0, "y");
   hStrag->SetTitleOffset(1.3, "z");
   hStrag->Draw("LEGO2 Z");
-  cs->SaveAs("straggling_3d.png");
+  cs->SaveAs((outDir + "/straggling_3d.png").c_str());
   // Companion 2D color map: same information, easier to read the width
   // evolution quantitatively than the LEGO view.
   TCanvas* cm = new TCanvas("cStragMap", "Straggling map", 1000, 650);
@@ -1402,7 +1507,7 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   hStrag->GetXaxis()->SetTitleOffset(1.2);
   hStrag->GetYaxis()->SetTitleOffset(1.1);
   hStrag->Draw("COLZ");
-  cm->SaveAs("straggling_map.png");
+  cm->SaveAs((outDir + "/straggling_map.png").c_str());
 
   // --- Summary CSV for further processing -----------------------------------
   // Linear stopping power in MeV/cm; mass stopping power S in MeV cm2/g
@@ -1454,7 +1559,8 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   // again uses RelErrPctUncertaintyStatOnly, this time correctly (the
   // "stat-only" side is bethe_no_corr's own analytic uncertainty, S_pstar
   // still treated as exact since NIST publishes none).
-  std::ofstream out("dedx_summary.csv");
+  const std::string dedxSummaryPath = outDir + "/dedx_summary.csv";
+  std::ofstream out(dedxSummaryPath);
   out << "material,E_MeV,n_events,n_exit,"
          "dedx_restricted_MeV_cm,dedx_restricted_err_MeV_cm,"
          "S_restricted_MeV_cm2_g,"
@@ -1534,9 +1640,9 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
     out << r.stragglingRms << ',' << r.balanceResidual << '\n';
   }
   out.close();
-  printf("\nWritten: dedx_vs_energy.png/.pdf, straggling_3d.png, "
-         "straggling_map.png and dedx_summary.csv "
-         "(%d of %zu grid points had data)\n",
+  printf("\nWritten: %s/dedx_vs_energy.png/.pdf, %s/straggling_3d.png, "
+         "%s/straggling_map.png and %s (%d of %zu grid points had data)\n",
+         outDir.c_str(), outDir.c_str(), outDir.c_str(), dedxSummaryPath.c_str(),
          n, cfg::kEnergiesMeV.size());
 
   // --- Record this run in the cross-material error-summary table ----------
@@ -1545,19 +1651,21 @@ void AnalyzeScan(const char* dataDir = ".", const char* pstarDir = cfg::kPstarDi
   row.eMinMeV = results.front().E;   // ACTUAL range analyzed: after
   row.eMaxMeV = results.back().E;    // kEMinMeV/kEMaxMeV and available data,
   row.nPoints = (long)results.size();  // not the raw kEnergiesMeV grid.
-  row.meanAbsBetheVsTotalPct =
+  row.meanAbsGeant4VsTeoriaPct =
       (nAbsBetheVsTotal > 0) ? sumAbsBetheVsTotal / nAbsBetheVsTotal : 0.;
-  row.nBetheVsTotal = nAbsBetheVsTotal;
-  row.meanAbsPstarVsTotalPct =
+  row.nGeant4VsTeoria = nAbsBetheVsTotal;
+  row.meanAbsGeant4VsNistPct =
       (nAbsPstarVsTotal > 0) ? sumAbsPstarVsTotal / nAbsPstarVsTotal : 0.;
-  row.nPstarVsTotal = nAbsPstarVsTotal;
-  row.meanAbsBetheVsPstarPct =
+  row.nGeant4VsNist = nAbsPstarVsTotal;
+  row.meanAbsTeoriaVsNistPct =
       (nAbsBetheVsPstar > 0) ? sumAbsBetheVsPstar / nAbsBetheVsPstar : 0.;
-  row.nBetheVsPstar = nAbsBetheVsPstar;
+  row.nTeoriaVsNist = nAbsBetheVsPstar;
   g_errorSummary.push_back(row);
   // Reprints the FULL accumulated table (all materials analyzed so far in
   // this session), not just this run — see PrintErrorSummaryTable() above.
-  PrintErrorSummaryTable();
+  // Written into THIS run's output directory (see the OUTPUT DIRECTORY note
+  // in the header comment) so it always sits next to the most recent data.
+  PrintErrorSummaryTable(outDir);
 }
 // ============================================================================
 // Entry point:  root -l -b -q analyze_dedx.C
