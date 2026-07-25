@@ -35,10 +35,16 @@
 /vis/open OGL 800x600-0+0
 /vis/viewer/set/autoRefresh false
 /vis/verbose errors
+/vis/viewer/set/background white
+
+# Camera: selected vector of the first octant, (0.759055, 0.115654, 0.640671) -- this is the exact
+# direction the logo billboard is rotated to face (see kLogoFaceDirection /
+# ForwardBillboardRotation() in DetectorConstruction.cc), so the logos read
+# as fully face-on from here, not foreshortened.
+/vis/viewer/set/viewpointVector 0.759055 0.115654 0.640671
 
 /vis/drawVolume
-/vis/viewer/set/viewpointThetaPhi 90 0
-/vis/viewer/zoom 1.4
+/vis/viewer/zoom 1.8
 
 # --- Trajectories colored by charge -------------------------------------
 #   green = neutral, blue = positive (protons), red = negative (deltas)
@@ -62,12 +68,17 @@
 /vis/viewer/set/autoRefresh true
 /vis/scene/notifyHandlers
 
-# The logos sit downstream of the slab along +z (see DetectorConstruction.cc
-# for the exact z's, printed to the console at construction time as
-# "### DetectorConstruction: decorative logos placed at z = ..."). To frame
-# just the logos instead of the whole (now slightly larger) World:
-# /vis/viewer/zoomTo 3
-# /vis/viewer/set/targetPoint 0 0 3 cm
+# The logo billboard is now placed a bit further downstream than the old
+# (non-rotated) single-plaque design used to be -- being tilted to face the
+# camera fully "head on" from a diagonal viewpoint means it needs more
+# clearance from the slab to avoid overlapping it (see the comment above
+# ComputeBillboardExtents() in DetectorConstruction.cc for the exact
+# geometry). The console prints the actual billboard centre at construction
+# time as "### DetectorConstruction: decorative logos placed as a
+# camera-facing billboard centred at ...". If you want to frame just the
+# billboard instead of the whole (now larger) World, read that value and
+# set /vis/viewer/set/targetPoint to it, e.g.:
+# /vis/viewer/set/targetPoint 0 -4 9.2 cm
 
 # --- Example: 30 protons of 150 MeV for visual inspection ---------------
 /gun/particle proton
