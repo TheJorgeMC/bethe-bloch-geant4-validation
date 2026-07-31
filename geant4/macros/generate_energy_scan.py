@@ -80,7 +80,7 @@ import bragg_kleeman_materials as bk
 # excitation energy I for the Bethe formula; air is only a bridging
 # material for the Bragg-Kleeman range-scaling rule, not a dE/dx
 # validation target). See referencias_y_decisiones.md.
-MATERIAL_KEY = "aluminium"
+MATERIAL_KEY = "water"
 MATERIAL = bk.G4_MATERIAL_NAME[MATERIAL_KEY]  # Geant4 NIST material name
 
 # --- Common sweep conditions (edit here, not in the macros) -----------------
@@ -91,7 +91,7 @@ SIZE_XY = "10 cm"
 N_LAYERS = 1
 CUT = "0.01 mm"
 CUT_TAG = "cut0p01mm"   # appears in the data file name
-N_EVENTS = 1000         # test statistics; raise for production
+N_EVENTS = int(1e7)         # test statistics; raise for production
 
 # --- Thin-slab thickness rule ------------------------------------------------
 FRAC_RANGE = 0.05       # target fractional energy loss per slab (~5%)
