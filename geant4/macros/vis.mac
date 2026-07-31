@@ -41,7 +41,8 @@
 # direction the logo billboard is rotated to face (see kLogoFaceDirection /
 # ForwardBillboardRotation() in DetectorConstruction.cc), so the logos read
 # as fully face-on from here, not foreshortened.
-/vis/viewer/set/viewpointVector 0.759055 0.115654 0.640671
+#/vis/viewer/set/viewpointVector 0.759055 0.115654 0.640671
+/vis/viewer/set/viewpointVector 1 0 0
 
 /vis/drawVolume
 /vis/viewer/zoom 1.8
