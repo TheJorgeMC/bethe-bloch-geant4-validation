@@ -57,4 +57,8 @@ foreach(_macro ${SLAB_MACROS})
   )
 endforeach()
 
+file(COPY "${PROJECT_SOURCE_DIR}/macros/material_data"
+        DESTINATION "${PROJECT_BINARY_DIR}/macros"
+)
+
 install(TARGETS slab DESTINATION bin)
