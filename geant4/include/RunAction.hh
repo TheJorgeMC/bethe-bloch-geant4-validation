@@ -41,6 +41,7 @@ class RunAction : public G4UserRunAction
   // into a single "<base>_nt_<ntuple>.csv" and deletes the per-thread files.
   // No-op in sequential mode or for ROOT output.
   void MergeCsvNtupleFiles(const G4String& ntupleName) const;
+  void EnsureOutputDirectory(const G4String& fileName) const;
 
   const DetectorConstruction* fDetector;
   const PrimaryGeneratorAction* fPrimary;

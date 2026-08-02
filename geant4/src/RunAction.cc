@@ -1,7 +1,9 @@
 // ============================================================================
 // RunAction.cc
 // ============================================================================
+
 #include "RunAction.hh"
+
 #include "AnalysisDefs.hh"
 #include "DetectorConstruction.hh"
 #include "PrimaryGeneratorAction.hh"
@@ -16,19 +18,33 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
+
+namespace fs = std::filesystem;
 
 namespace
 {
 // Default output file name; overridden with /analysis/setFileName.
 const G4String kDefaultFileName = "slab_out";
+
 // Default file type. CSV is directly readable with pandas; for a natively
 // merged single file use a .root extension in /analysis/setFileName
 // (e.g. dedx_150MeV.root) — see README. For CSV in MT mode, the per-thread
 // files are merged by MergeCsvNtupleFiles() below.
 const G4String kDefaultFileType = "csv";
+
 // Name of the ntuple booked in Book() (used to locate the CSV files).
 const G4String kNtupleName = "slab";
+
+// Returns true when the analysis file name asks for ROOT output, which is the
+// only format with native cross-thread ntuple merging.
+G4bool WantsRootOutput(const std::string& fileName)
+{
+  const std::string ext = ".root";
+  return fileName.size() > ext.size() &&
+         fileName.compare(fileName.size() - ext.size(), ext.size(), ext) == 0;
+}
 }  // namespace
 
 RunAction::RunAction(const DetectorConstruction* det,
@@ -44,9 +60,12 @@ void RunAction::Book()
   am->SetDefaultFileType(kDefaultFileType);
   am->SetFileName(kDefaultFileName);
   am->SetVerboseLevel(0);
-  // Native ntuple merging across threads is only supported for ROOT output;
-  // it is a no-op for CSV, where MergeCsvNtupleFiles() takes over instead.
-  am->SetNtupleMerging(true);
+  // NOTE: SetNtupleMerging() is deliberately NOT called here. Native merging
+  // only exists for ROOT output, and requesting it with CSV makes Geant4 emit
+  // "Ntuple merging is not available with csv output" once per thread per run.
+  // The decision needs the actual file name, which is only known after
+  // /analysis/setFileName has been processed, so it is taken in
+  // BeginOfRunAction instead. For CSV, MergeCsvNtupleFiles() does the job.
 
   // --- H1 kH1Depth: depth dose. Created with provisional binning and
   // rebinned in BeginOfRunAction with the current layer count and thickness
@@ -94,6 +113,22 @@ void RunAction::BeginOfRunAction(const G4Run*)
   const G4double thicknessMM = fDetector->GetThickness() / mm;
   am->SetH1(analysis::kH1Depth, nLayers, 0., thicknessMM);
 
+  const std::string fileName = am->GetFileName();
+
+  // Enable native cross-thread ntuple merging only when the output really is
+  // ROOT; with CSV it is ignored and only produces a warning per thread. Must
+  // be set before OpenFile().
+  am->SetNtupleMerging(WantsRootOutput(fileName));
+
+  // G4AnalysisManager does NOT create directories: the name given to
+  // /analysis/setFileName is handed straight to the file-open call, and the
+  // path is resolved relative to the CWD of the executable, not to wherever
+  // generate_energy_scan.py happened to run. In the multi-material sweep the
+  // name carries a "material_data/<key>/" prefix, so the directory must be
+  // created here or the open silently fails and every FillNtupleDColumn()
+  // then raises "Ntuple 0 does not exist."
+  EnsureOutputDirectory(fileName);
+
   am->OpenFile();
 }
 
@@ -113,10 +148,27 @@ void RunAction::EndOfRunAction(const G4Run*)
   }
 }
 
+void RunAction::EnsureOutputDirectory(const G4String& fileName) const
+{
+  const fs::path outPath = std::string(fileName);
+  if (!outPath.has_parent_path()) return;
+  const fs::path dir = outPath.parent_path();
+  if (dir.empty()) return;
+
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  // create_directories() reports no error when the directory already exists,
+  // so a non-empty ec here is a genuine failure (permissions, a file with the
+  // same name, ...). Every worker thread calls this; the operation is
+  // idempotent and the error_code overload never throws on a benign race.
+  if (ec && !fs::is_directory(dir)) {
+    G4cerr << "### RunAction: could not create output directory "
+           << dir.string() << " : " << ec.message() << G4endl;
+  }
+}
+
 void RunAction::MergeCsvNtupleFiles(const G4String& ntupleName) const
 {
-  namespace fs = std::filesystem;
-
   // Base name as set via /analysis/setFileName. If the user requested a
   // non-CSV format through an explicit extension (.root, .hdf5, .xml),
   // Geant4 merges natively (or writes a single file) and there is nothing
@@ -130,8 +182,20 @@ void RunAction::MergeCsvNtupleFiles(const G4String& ntupleName) const
     if (ext == "csv") base.erase(dot);
   }
 
-  // Geant4 names the worker CSV files "<base>_nt_<ntuple>_t<i>.csv".
-  const std::string prefix = base + "_nt_" + std::string(ntupleName) + "_t";
+  // The base name may carry a directory prefix ("material_data/<key>/dedx_...").
+  // Geant4 writes the per-thread files next to it, so the search has to happen
+  // in that directory and the prefix match has to be done against the bare file
+  // name — comparing a path-carrying prefix against filename() would never
+  // match and the merge would silently do nothing.
+  const fs::path basePath(base);
+  const fs::path dir =
+      basePath.has_parent_path() && !basePath.parent_path().empty()
+          ? basePath.parent_path()
+          : fs::current_path();
+  const std::string stem = basePath.filename().string();
+
+  // Geant4 names the worker CSV files "<stem>_nt_<ntuple>_t<i>.csv".
+  const std::string prefix = stem + "_nt_" + std::string(ntupleName) + "_t";
   const std::string suffix = ".csv";
 
   struct ThreadFile
@@ -142,7 +206,7 @@ void RunAction::MergeCsvNtupleFiles(const G4String& ntupleName) const
   std::vector<ThreadFile> files;
 
   std::error_code ec;
-  for (const auto& entry : fs::directory_iterator(fs::current_path(), ec)) {
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
     if (ec) break;
     if (!entry.is_regular_file()) continue;
     const std::string name = entry.path().filename().string();
@@ -167,7 +231,7 @@ void RunAction::MergeCsvNtupleFiles(const G4String& ntupleName) const
             [](const ThreadFile& a, const ThreadFile& b) { return a.id < b.id; });
 
   const fs::path mergedPath =
-      base + "_nt_" + std::string(ntupleName) + ".csv";
+      dir / (stem + "_nt_" + std::string(ntupleName) + ".csv");
   std::ofstream out(mergedPath, std::ios::trunc);
   if (!out) {
     G4cerr << "### RunAction: could not open " << mergedPath.string()
@@ -195,8 +259,10 @@ void RunAction::MergeCsvNtupleFiles(const G4String& ntupleName) const
     }
     headerWritten = true;
   }
+
   out.close();
 
+  ec.clear();
   for (const auto& tf : files) fs::remove(tf.path, ec);
 
   G4cout << "### RunAction: merged " << files.size()
