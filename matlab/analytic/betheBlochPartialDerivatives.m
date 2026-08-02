@@ -9,8 +9,8 @@ function d = betheBlochPartialDerivatives(K, ZA, me, I, beta, gamma, z)
 %   These four expressions were derived symbolically in the Python
 %   companion notebook (SymPy, see cell 12) and are HARDCODED here
 %   rather than computed via a symbolic toolbox, since this project
-%   deliberately uses only base MATLAB (no toolboxes required, per the
-%   Fase 0 checklist). The printed SymPy output was:
+%   deliberately uses only base MATLAB (no toolboxes required).
+%   The printed SymPy output was:
 %
 %       dS/dK  = ZA*z^2*(-beta^2 + log(2*beta^2*gamma^2*me/I))/beta^2
 %       dS/dZA = K*z^2*(-beta^2 + log(2*beta^2*gamma^2*me/I))/beta^2
