@@ -33,7 +33,7 @@ PhysicsList::PhysicsList(G4int emOption)
 
   // --------------------------------------------------------------------------
   // Electromagnetic physics. option4 is the most accurate EM variant
-  // available (low-energy Livermore/Penelope-type models and finer precision
+  // available (low-energy Bragg model and finer precision
   // parameters); option3 is offered as a model-sensitivity check. Any other
   // value falls back to option4 with a warning.
   // --------------------------------------------------------------------------
@@ -48,7 +48,6 @@ PhysicsList::PhysicsList(G4int emOption)
     RegisterPhysics(new G4EmStandardPhysics_option4());
     G4cout << "### PhysicsList: G4EmStandardPhysics_option4" << G4endl;
   }
-
   // NOTE on G4EmExtraPhysics: deliberately OMITTED. That constructor adds
   // gamma-nuclear, muon-nuclear and synchrotron processes, none of which is
   // relevant to the electromagnetic energy loss of protons in a slab. The
