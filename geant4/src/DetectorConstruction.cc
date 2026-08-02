@@ -151,7 +151,7 @@ constexpr G4double kVisBeamApproachMm = 150.0;
 // rotated so its own local z-axis (the flat 2D face's normal, the axis
 // G4ExtrudedSolid extrudes along) points along this direction, so the row
 // of logos appears fully face-on when viewed from that viewpoint.
-const G4ThreeVector kLogoFaceDirection = G4ThreeVector(0.759055, 0.115654, 0.640671).unit();
+const G4ThreeVector kLogoFaceDirection = G4ThreeVector(1, 0, 0).unit();
 
 // Angle/axis of the fixed billboard tilt, derived once and reused both for
 // the G4PVPlacement rotation and for the corner-extent math below. Geant4
@@ -494,7 +494,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
               "camera-facing billboard centred at "
            << G4BestUnit(logoBillboardCentre, "Length") << " (scale "
            << (kLogoScale * 100.) << "%, left-to-right: LIFI, CUCEI banner, "
-              "CUCEI R, facing (1,1,1); World half-extents: xy = "
+              "CUCEI R, facing (0,0,1); World half-extents: xy = "
            << G4BestUnit(worldHalfXY, "Length")
            << ", z = " << G4BestUnit(worldHalfZ, "Length") << ")" << G4endl;
   }
